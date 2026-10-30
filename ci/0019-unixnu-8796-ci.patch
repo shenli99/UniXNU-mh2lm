@@ -1141,146 +1141,153 @@ index 19558bd..26940f1 100644
      build_archives(ctx, env)
      run(['bash', script], cwd=ctx.tree, env=env, log_file=ctx.logs / 'kernel.log')
  
-diff --git a/patches/xnu/904-framebuffer-probes.patch b/patches/xnu/904-framebuffer-probes.patch
+diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..1234567
+index 0000000..be3144b
 --- /dev/null
-+++ b/patches/xnu/904-framebuffer-probes.patch
-@@ -0,0 +1,142 @@
++++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
+@@ -0,0 +1,144 @@
 +diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
-+index 7193105..abcdefg 100644
++index 6bfc3cd..fd88f1f 100644
 +--- a/osfmk/arm64/start.s
 ++++ b/osfmk/arm64/start.s
-+@@ -460,6 +460,26 @@ LEXT(start_first_cpu)
++@@ -90,6 +90,65 @@
++ #endif /* defined(KERNEL_INTEGRITY_KTRR) */
++ .endmacro
 + 
+++/*
+++ * mh2lm early boot probes (MMU off only).
+++ *
+++ * Same layout as UniXNU scripts/patch-xnu-entry-probe.py: the frame buffer is
+++ * split into 1/16 bands; band 0 is DarwinBoot's green band and stage N paints
+++ * band N, so the bars stack below the green one in execution order. The base,
+++ * row bytes and height come from boot_args.Video (0x28, 0x38, 0x48).
+++ * Clobbers x10-x15 and the flags.
+++ */
+++.macro MH2LM_PROBE_BAR args, band, lo, hi
+++	ldr		x10, [\args, #0x28]					// Video.v_baseAddr
+++	ldr		x11, [\args, #0x38]					// Video.v_rowBytes
+++	ldr		x12, [\args, #0x48]					// Video.v_height
+++	mul		x11, x11, x12
+++	lsr		x11, x11, #4						// bytes per band
+++	bic		x11, x11, #7
+++	mov		x13, #\band
+++	mul		x14, x11, x13
+++	add		x10, x10, x14
+++	movz	w15, #\lo
+++	movk	w15, #\hi, lsl #16					// 0xAARRGGBB
+++1:
+++	stp		w15, w15, [x10], #8
+++	subs	x11, x11, #8
+++	b.hi	1b
+++	dsb		sy
+++.endmacro
+++
+++/*
+++ * Right after the MMU is on the frame buffer is no longer mapped, so the signal
+++ * is time: wait MH2LM_PROBE_RESET_SECONDS, then PSCI SYSTEM_RESET. A reboot on
+++ * its own after that delay means the CPU got through the MMU enable. Set
+++ * MH2LM_PROBE_RESET_AFTER_MMU to 0 to let the boot continue past this point.
+++ */
+++#define MH2LM_PROBE_RESET_AFTER_MMU 1
+++#define MH2LM_PROBE_RESET_SECONDS 6
+++#define MH2LM_PROBE_TIMEBASE 19200000
+++
+++.macro MH2LM_PROBE_RESET
+++	mrs		x1, CNTPCT_EL0
+++	movz	x2, #((MH2LM_PROBE_TIMEBASE * MH2LM_PROBE_RESET_SECONDS) & 0xFFFF)
+++	movk	x2, #(((MH2LM_PROBE_TIMEBASE * MH2LM_PROBE_RESET_SECONDS) >> 16) & 0xFFFF), lsl #16
+++	add		x2, x1, x2
+++1:
+++	isb
+++	mrs		x1, CNTPCT_EL0
+++	cmp		x1, x2
+++	b.lo	1b
+++	movz	w0, #0x0009
+++	movk	w0, #0x8400, lsl #16				// PSCI_SYSTEM_RESET
+++	mov		x1, xzr
+++	mov		x2, xzr
+++	mov		x3, xzr
+++	smc		#0
+++2:
+++	wfe
+++	b		2b
+++.endmacro
+++
++ /*
++  * Checks the reset handler for global and CPU-specific reset-assist functions,
++  * then jumps to the reset handler with boot args and cpu data. This is copied
++@@ -462,9 +521,11 @@ start_cpu:
++ 	.globl EXT(start_first_cpu)
++ LEXT(start_first_cpu)
++ 
+++	MH2LM_PROBE_BAR x0, 1, 0x0000, 0xFFFF		// 1 red: start_first_cpu entry
 + 	// Unlock the core for debugging
 + 	msr		OSLAR_EL1, xzr
-++
-++	// PROBE 1: RED - Entry into start_first_cpu
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16			// 0x835ff800
-++	mov		x11, #0xFF0000FF			// RED (ARGB)
-++	mov		x12, #(1080*2160*4)			// Full screen size
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
-++
 + 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
-++
-++	// PROBE 2: ORANGE - Interrupts disabled
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0xFFA500FF			// ORANGE
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
+++	MH2LM_PROBE_BAR x0, 2, 0x8000, 0xFFFF		// 2 orange: interrupts masked
 + 
 + 	mov		x20, x0
 + 	mov		x21, #0
-+@@ -468,6 +488,16 @@ LEXT(start_first_cpu)
++@@ -473,6 +534,7 @@ LEXT(start_first_cpu)
 + 	adrp	x0, EXT(LowExceptionVectorBase)@page
 + 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 + 	MSR_VBAR_EL1_X0
-++
-++	// PROBE 3: YELLOW - Exception vectors set
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0xFFFF00FF			// YELLOW
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
+++	MH2LM_PROBE_BAR x20, 3, 0xFF00, 0xFFFF		// 3 yellow: low exception vectors
 + 
 + 
 + 	// Get the kernel memory parameters from the boot args
-+@@ -500,6 +530,16 @@ LEXT(start_first_cpu)
++@@ -487,6 +549,7 @@ LEXT(start_first_cpu)
++ 	// in ml_parse_cpu_topology(), which happens later in bootstrap.
++ 	msr		TPIDRRO_EL0, xzr
++ 	msr		TPIDR_EL0, xzr
+++	MH2LM_PROBE_BAR x20, 4, 0xFFFF, 0xFFFF		// 4 white: boot args read
++ 
++ 	// Set up exception stack pointer
++ 	adrp	x0, EXT(excepstack_top)@page		// Load top of exception stack
++@@ -510,6 +573,7 @@ LEXT(start_first_cpu)
++ 	sub		x0, x0, x23
++ 	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
 + 	mov		sp, x0
+++	MH2LM_PROBE_BAR x20, 5, 0xFFFF, 0xFF00		// 5 cyan: exception and interrupt stacks
 + 
-+ 	// Set up interrupt stack pointer
-++
-++	// PROBE 4: GREEN - Exception stack set up
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0x00FF00FF			// GREEN
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
-++
-+ 	adrp	x0, EXT(intstack_top)@page			// Load top of irq stack
-+ 	add		x0, x0, EXT(intstack_top)@pageoff
-+ 	add		x0, x0, x22							// Convert to KVA
-+@@ -618,6 +658,16 @@ Lbuild_arm_kernel_block_mapping_done:
-+ 	// We now have a V=P mapping and a KVA mapping of the mach header.  We can now
-+ 	// drop to KVA for execution.
-+ 	add		x0, x0, lr
-++
-++	// PROBE 5: CYAN - Page tables built
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0x00FFFFFF			// CYAN
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
-++
-+ 	br		x0
++ 	// Load address to the C init routine into link register
++ 	adrp	lr, EXT(arm_init)@page
++@@ -623,6 +687,7 @@ Lbootstrap_tables_exhausted:
++ Lbootstrap_tables_ready:
++ 	/* Ensure TTEs are visible */
++ 	dsb		ish
+++	MH2LM_PROBE_BAR x20, 6, 0x00FF, 0xFF00		// 6 blue: bootstrap page tables
 + 
-+ /*
-+@@ -645,6 +695,16 @@ common_start:
-+ 	ldr		x1, [x0, SR_RESTORE_TCR_EL1]
-+ 	MSR_TCR_EL1_X1
 + 
-++	// PROBE 6: BLUE - TCR configured
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0x0000FFFF			// BLUE
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
-++
-+ 	/* Set up translation table base registers.
-+ 	 *	TTBR0 - V=P table @ top of kernel
-+ 	 *	TTBR1 - KVA table @ top of kernel + 1 page
-+@@ -787,6 +847,16 @@ common_start:
-+ 	adrp	x0, EXT(ExceptionVectorsBase)@page		// Load exception vector table base address
-+ 	add		x0, x0, EXT(ExceptionVectorsBase)@pageoff
-+ 	MSR_VBAR_EL1_X0
-++
-++	// PROBE 7: PURPLE - Final exception vectors set
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0x800080FF			// PURPLE
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
++ 	b		common_start
++@@ -696,6 +761,9 @@ common_start:
++ 	isb
++ 	tlbi	vmalle1
++ 	dsb		ish
+++	cbnz	x21, Lmh2lm_probe_7_done
+++	MH2LM_PROBE_BAR x20, 7, 0x00FF, 0xFFFF		// 7 magenta: TCR, TTBR0/1 and MAIR set
+++Lmh2lm_probe_7_done:
 + 
-+ 	// Enable the MMU and caches.
-+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
-+@@ -794,6 +864,16 @@ common_start:
-+ #endif
++ 
++ #if defined(BCM2837) && (!defined(XNU_NATIVE_ARCH_TIMER) || !XNU_NATIVE_ARCH_TIMER)
++@@ -752,10 +820,19 @@ common_start:
++ 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
++ #endif /* HAS_APPLE_PAC */
++ 
+++	cbnz	x21, Lmh2lm_probe_8_done
+++	MH2LM_PROBE_BAR x20, 8, 0x8080, 0xFF80		// 8 grey: final vectors, MMU still off
+++Lmh2lm_probe_8_done:
+++
++ 	// Enable caches, MMU, ROP and JOP
++ 	MOV64   x0, SCTLR_EL1_DEFAULT
 + 	MSR_SCTLR_EL1_X0
 + 	isb		sy
-++
-++	// PROBE 8: WHITE - MMU and caches enabled!
-++	mov		x10, #0x83000000
-++	movk	x10, #0x5ff8, lsl #16
-++	mov		x11, #0xFFFFFFFF			// WHITE
-++	mov		x12, #(1080*2160*4)
-++1:	str		w11, [x10], #4
-++	subs	x12, x12, #4
-++	b.ne	1b
-++	dsb		sy
+++#if MH2LM_PROBE_RESET_AFTER_MMU
+++	cbnz	x21, Lmh2lm_probe_reset_done
+++	MH2LM_PROBE_RESET							// 9: MMU and caches on (reset after the delay)
+++Lmh2lm_probe_reset_done:
+++#endif
 + 
-+ #if __ARM_KERNEL_PROTECT__
-+ 	/*
++ #if !VMAPPLE
++ 	MOV64   x1, SCTLR_EL1_DEFAULT

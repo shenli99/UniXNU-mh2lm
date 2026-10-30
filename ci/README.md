@@ -28,9 +28,32 @@
 artifact `kernel-8796` 里有：
 
 ```
-mach.development.bcm2837.unstripped     ← 内核（4 KiB 页，BCM2837 machine config）
-kernel.log + out/mh2lm/logs/*.log       ← 构建日志
+kernel/mach.development.bcm2837*        ← 内核（4 KiB 页，BCM2837 machine config）
+kernel/start.s                          ← 实际编进去的 start.s（含探针），对照用
+logs/*.log                              ← out/mh2lm/logs/ 全部日志；xnu-work-diffstat.txt 是补丁实际改动
+relink/tree/...                         ← 重新链接的输入：link.filelist 及其全部 .o、.LDFLAGS、
+                                          导出表、archive builder 的 .a、fakeroot 的 libfirehose/libcc_kext
 ```
+
+早期启动探针在 `ci/0019` 新增的 `patches/xnu/zzzz-mh2lm-early-boot-probes.patch`（文件名排最后，
+在全部 UniXNU 补丁之后应用）。画法与官方 `scripts/patch-xnu-entry-probe.py` 相同：从 boot_args.Video
+取 base/rowBytes/height，第 N 阶段画第 N 个 1/16 色带，排在 DarwinBoot 绿带下面：
+
+| 条 | 颜色 | 位置 |
+| --- | --- | --- |
+| 1 | 红 | start_first_cpu 入口 |
+| 2 | 橙 | DAIFSet 关中断后 |
+| 3 | 黄 | 装 LowExceptionVectorBase 后 |
+| 4 | 白 | 读完 boot args 后 |
+| 5 | 青 | 异常栈、中断栈建好后 |
+| 6 | 蓝 | bootstrap 页表建好后 |
+| 7 | 品红 | TCR、TTBR0/1、MAIR 配好后 |
+| 8 | 灰 | 装最终异常向量后、开 MMU 前 |
+| 9 | 无色 | 开 MMU/cache 后等 6 秒 PSCI 重启（MMU 开后 framebuffer 没映射，用时间当信号） |
+
+不想要第 9 步的重启，把补丁里 `MH2LM_PROBE_RESET_AFTER_MMU` 改成 0。
+
+**设备仓库不要放 `patches/xnu/` 目录**：format 1 下同名模块设备仓库优先，会整个替换 UniXNU 的 `patches/xnu/`。
 
 拿到本地后：
 
