@@ -1,0 +1,116 @@
+# UniXNU-mh2lm（P2 起草）
+
+LG G8X ThinQ（`mh2lm`，SM8150）的 UniXNU 设备仓库。结构照 `ref/UniXNU-guacamole` 抄，
+数值凡未在真机上核对过的都标了 `TODO(verify)`。
+
+## 现状（2026-10-27）
+
+- `board.toml` 已能被 UniXNU 解析：`python3 unixnu status -D ../UniXNU-mh2lm` 正常列出 device/drivers/kits/patches。
+- `scripts/`：`adt.py`、`mkadt.py`、`devices.py` 从 guacamole 拷来，**已加 `mh2lm` device profile**
+  （GIC/timer/UFS 与 android-mh2lm.dtb 核对过；fb/内存布局标了 TODO(verify)）。
+- **ADT 已经能离线生成**：`python3 scripts/mkadt.py out.adt --device mh2lm --dram-size 0xc0000000`
+  → 9904 B。目前缺 `base-d22ap.adt`（Apple 的 /product 身份节点，要从 iOS 16 IPSW 里抽），
+  生成时会警告 "no /product node"。
+- 内核（`kernel.macho`）还没有：需要 iOS 16 的 kernelcache 与预链接工具链。
+- `configs/`（defconfig）还没写。
+
+## 待办
+
+| # | 事项 | 依赖 | 备注 |
+| --- | --- | --- | --- |
+| 1 | `scripts/devices.py` 加 `mh2lm` profile | 无（离线可做） | 从 `android-mh2lm.dtb` 里读 GIC/timer/fb/UFS/USB/I2C 等节点；与 guacamole 同 SoC，多数地址可直接对 |
+| 2 | `scripts/make-mh2lm-adt.py` | #1 | 照 `make-guacamole-adt.py` 改 `--device mh2lm` |
+| 3 | `configs/` defconfig | #1 | `unixnu defconfig` 选配置用 |
+| 4 | 内核 Mach-O（`kernel.macho`） | **需要工具链 + IPSW** | 见下 |
+| 5 | payload FAT 卷 | #4（或 stub） | `unixnu payload --kernel FILE` |
+
+## 关键数值（来自本工作区已核对的数据）
+
+| 项 | 值 | 来源 |
+| --- | --- | --- |
+| UEFI FD | `0xC3C00000`，`0x300000` | `SurfaceDuo1.fdf` / `PlatformMemoryMapLib` |
+| 显示 framebuffer | `0x9D200000`（"Display Reserved" 18 MiB） | mh2lm 内存映射 |
+| 面板 | 1080×2340，32bpp | `PcdsFixedAtBuild.dsc.inc` |
+| boot.img | v0 / 4096 / kernel@0x8000 / tags@0x100 | 实测可启动 |
+| ABL "Kernel" RAM 区 | `0x80000000` + **仅 6 MiB** | mh2lm 内存映射 ⚠️ |
+
+⚠️ **6 MiB 的 Kernel 区装不下 64 MiB payload ramdisk**。P2 必须先决定：
+(a) 改 `PlatformMemoryMapLib` 把 Kernel 区扩到（至少）96 MiB，且不能和别的 carve-out 冲突；
+(b) 或换加载方式（payload 放别的已映射区）。
+
+## 内核步骤需要什么
+
+`unixnu kernel` 在 Linux 上用 `scripts/linux/setup-toolchain.py` 准备工具链；
+`--skip-setup` / `seed-data-grow` 之类才需要 macOS 的 `hdiutil`。
+所以云端准备一台**能联网的 Linux**（16–32 GiB 内存比较稳）+ iOS 16 IPSW 即可，未必要 macOS。
+
+## 先到 M2 的捷径（不依赖内核）
+
+M2 的验收只是 `DARWINBOOT: inputs validated; exiting boot services`。
+可以用一个**手搓的最小 ARM64 Mach-O**（clang 直接可生成）当 `--kernel`，
+把 DarwinBoot 的校验、窗口分配、ExitBootServices 全跑通；真内核等工具链就绪再换。
+
+
+## 2026-10-27 晚：A1（本地 stub 冲 M2）的调研结论
+
+### 载荷链路（读源码得到，和之前的假设不同）
+
+1. ABL 按 boot.img 头的 `ramdisk_addr/size` 把 ramdisk 装进 RAM，并把区间写进它传给下一级的 **DTB**
+   的 `/chosen`：`linux,initrd-start` / `linux,initrd-end`；
+2. `BootShim` 保留 x0（DTB 指针）→ Mu PrePi 存进 HOB；
+3. `UniXNURamDiskDxe` 读 `/chosen` 的 initrd 区间，**把这段内存当只读块设备发布**；
+4. UniXNU 在它上面挂 FAT → 读 `EFI/UniXNU/unixnu.toml`；
+5. 选 `xnu` 条目后，DarwinBoot 从**同一个 FAT 卷**读 `kernel.macho` 和 `kernel.macho.adt`，
+   用 ADT 里的节点决定 window/ramdisk/video，然后 ExitBootServices 跳内核。
+
+所以 payload 卷 = **initrd ramdisk**（64 MiB FAT 镜像），不是放进 FV。
+
+### DarwinBoot 对内核 Mach-O 的硬要求（ParseKernel）
+
+- magic `0xfeedfacf`、cputype `0x0100000c`、filetype 2
+- `LC_SEGMENT_64` 且 `vmsize != 0`；入口必须落在**可执行段**（initprot & 4）且在其 filesize 内
+- `LC_UNIXTHREAD`（cmd 5）cmdsize 288、flavor 6、count 68、pc 在 +272
+- 段不重叠、base 页对齐、`End-Base ≤ window - 2 MiB`
+
+`ld64.lld` 产出的是 `LC_MAIN`，不被接受；已写 [scripts/make-stub-kernel.py](../../scripts/make-stub-kernel.py)
+直接生成满足上述条件的 Mach-O（17 872 B，entry 0x11000），并用同样的规则自检通过。
+
+### 待办（下一轮）
+
+1. `unixnu payload --kernel <stub> --uefi <aloha>` 生成 64 MiB FAT（会调用 make-mh2lm-adt.py）；
+2. boot.img 加 ramdisk，**ramdisk 地址要避开 mh2lm 的 `DBI Dump` carve-out（0x82A00000–0x83722000）**：
+   `0x81000000 + 64 MiB` 会撞上，候选是 `0xC4000000` 或先缩到 32 MiB 试探；
+3. `fastboot boot` 看 `DARWINBOOT: inputs validated; exiting boot services`（M2 验收）。
+
+
+## 2026-10-27 夜：ramdisk 加载的两次试错（重要结论）
+
+| 现象 | 真正原因 | 处置 |
+| --- | --- | --- |
+| 加了 ramdisk 后「闪日志→黑屏→重启」 | mh2lm 的库存内存映射里 **0x80600000–0x82A00000 没有描述**，PrePi 没给它建页表；驱动一读就 data abort | 在 `PlatformMemoryMapLib` 里补一段 `RAM Partition 0x80600000 + 0x02400000`（[0013](../../patches/0013-ramdisk-window-mapping.patch)） |
+| 读 unmapped 还导致「扫描候选地址」自杀 | 同上 | 驱动里的候选地址全部限在 **4 GiB 以下**（高段 DDR 在这棵树里没映射） |
+| 修好映射后仍失败 | ABL 自报 **`lge crash handler: secure watching bite! invalid ram console`** —— LG 的 ABL 对「带大 ramdisk 的 boot.img」有自己的安全检查（ram console / secure watchdog），0x81000000 与 0x82000000 都触发 | 待定，见下 |
+
+### 现在的取舍
+
+- **不再走 ramdisk**：把 payload（stub 只有 ~30 KB）做成 **FFS 文件塞进 FV**，由 FvSimpleFileSystem 提供卷。
+  FD 目前用 2.35/3 MiB，余量足够；这样完全不碰 ABL 的 ramdisk 逻辑。
+- 或继续逆 ABL 的 ram console / secure watchdog 规则（成本高、收益低）。
+
+驱动侧已经准备好：`UniXNURamDiskDxe` 在拿不到 FDT initrd 时会用构建期 PCD（`PcdUniXNUInitrdBase/Size`）
+扫描候选地址里的 FAT 引导扇区（[0014](../../patches/0014-initrd-fallback.patch)），换偏移只要重打 boot.img。
+
+
+## 2026-10-27 夜（B1）：payload 走 FV，M2 打通
+
+- **B1 做法**：`payload.img`（512 KiB FAT12，含 `EFI/UniXNU/unixnu.toml` + `Payloads/kernel.macho[.adt]`）
+  作为 `FILE FREEFORM = 7E2B4C1A-...` 的 `SECTION RAW` 塞进 FV（`SurfaceDuo1.fdf`）；
+  `UniXNURamDiskDxe` 先用 `GetSectionFromAnyFv()` 取这段，发布成只读块设备。boot.img 保持 6 字节空 ramdisk，完全不碰 ABL 的 ramdisk 逻辑。
+  → **菜单出现 `LG G8X - XNU (stub)` 条目**（[0016](../../patches/0016-fv-payload.patch) / [0017](../../patches/0017-initrd-and-fv-source.patch)）
+- **Mu 变量策略的 DEBUG 断言**：`MuVarPolicyFoundationDxe` 的 `ASSERT_EFI_ERROR` 在 mh2lm 上必然触发
+  （变量服务拒绝阶段指示变量，`EFI_INVALID_PARAMETER`），会让 ReadyToBoot / Restart / Power off 全部卡死。
+  已降级为只打日志（[0015](../../patches/0015-varpolicy-assert-debug-only.patch)）。
+- **M2 现象**：选中 XNU 条目后屏幕**闪绿光**（DarwinBoot 在 ExitBootServices 前把 framebuffer 顶部 1/16 刷绿），
+  随后设备复位回 Android —— stub 内核没有真正的内核代码，复位是预期行为。**即 DarwinBoot 已完成输入校验并退出 boot services**。
+- 待办：为了留下"日志证据"，给 DarwinBoot 加一个可选的 handoff 前 stall（几秒），让屏幕上的
+  `DARWINBOOT: inputs validated; exiting boot services` 能被拍到；之后 M2 就可以正式勾掉，进入真内核（云端）。

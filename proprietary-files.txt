@@ -1,0 +1,21 @@
+# Required proprietary inputs: path | source | SHA-256 | consumer
+#
+# 路径约定：本设备仓库不含板级固件（format 1 的设备把固件放在 UEFI 仓库里），
+# 所以下列路径都相对 UEFI 检出目录的 Platforms/SurfaceDuo1Pkg/Device/lg-mh2lm/。
+# 全部来自本机原始固件：boot_a.bin（DTB）与 LG 原厂 ABL/UEFI 包（ButtonsDxe）。
+#
+# 设备树：stock boot_a.bin 的两个 FDT 拼接（997,590 B），boot.img 的 DTB 与 ADT 的 GIC/timer/UFS 交叉核对都靠它。
+DeviceTreeBlob/Android/android-mh2lm.dtb | stock boot_a.bin DTB (two concatenated FDTs) | de479a4575a39a0edd8106e087deb321c173999b658ed4d2ebecefe6c4f1befb | boot image DTB; ADT cross-check
+#
+# 原厂按键驱动，改成发布 SimpleTextInputEx 的形态（菜单/工具页靠它收键）。
+PatchedBinaries/ButtonsDxe.efi | stock LG G8X firmware, patched input publish | 6ab5fe71eb6f60dfd0c288d3d6d0c669385981d2179a62a3cd1e4f03650dcd79 | UniXNU menu / AdvancedLogDxe input
+#
+# 原厂 Qualcomm UEFI 驱动集（80 个 .efi，ABL 包内），按路径原样 vendored，不修改。
+# 聚合指纹 = 对 `find Binaries -name '*.efi' | sort` 逐个 sha256sum 后再 sha256sum。
+Binaries/QcomPkg/**/*.efi (80 files) | stock LG G8X firmware (Qualcomm UEFI package) | b6151db553e5d9b3bd426c71c2f666f39ab05ce1890e23f2c8dcbfc1fcc94125 (aggregate) | UEFI drivers required by the DSC/FDF
+#
+# 以下 Apple 产物不入库，构建/打包时在本地取得，并由 board.toml 的 sha256 校验：
+#   iOS 16.7.16 IPSW          Apple CDN（url 见 board.toml [ipsw]）
+#   kernelcache.release.iphone10b  IPSW 成员，pin 见 board.toml [ipsw.sha256]
+#   DeviceTree.d22ap.im4p          IPSW 成员，pin 见 board.toml [ipsw.sha256]
+#   scripts/base-d22ap.adt         由上面 DeviceTree 解出（scripts/adt.py unwrap），不入库

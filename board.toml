@@ -1,0 +1,129 @@
+# LG G8X ThinQ (mh2lm, SM8150) device repository for UniXNU.
+#
+# 状态：P2 起草稿。结构照 ref/UniXNU-guacamole 抄，数值凡是没在真机/DTB 上核对过的
+# 都标了 TODO(verify)，见 NOTES.md。
+
+[board]
+name = "mh2lm"
+soc = "SM8150"
+description = "LG G8X ThinQ (LM-G850, mh2lm)"
+kit = "mh2lm"
+
+[firmware]
+# 我们不跑 unixnu 的 firmware 步骤（本仓库用 Project-Aloha 的 mu_aloha_platforms 树，
+# 布局与 uefi-sheng 不同），这一节只给 unixnu status/bootimg 读参数用。
+config = "mh2lm"
+dsc = "Platforms/SurfaceDuo1Pkg/SurfaceDuo1.dsc"
+fd = "Build/SurfaceDuo1Pkg/{target}_CLANGPDB/FV/SM8150_EFI.fd"
+submodules = [
+  "MU_BASECORE",
+  "Common/MU",
+  "Common/MU_OEM_SAMPLE",
+  "Features/DFCI",
+  "Features/CONFIG",
+  "Binaries",
+  "Platforms/OpensslPkg/Library/OpensslLib/openssl",
+]
+packages = [
+  "{uefi}/Platforms",
+  "{uefi}/Common/MU",
+  "{uefi}/Common/MU_OEM_SAMPLE",
+  "{uefi}/Features/DFCI",
+  "{uefi}/Features/CONFIG",
+  "{uefi}/Binaries",
+  "{uefi}/Silicon/QC/Sm8150",
+  "{tree}/package",
+  "{tree}/drivers/DarwinBoot",
+  "{edk2}",
+]
+
+[firmware.defines]
+TARGET_DEVICE = "lg-mh2lm"
+FDT = "mh2lm.dtb"
+# 本工作区的 crypto stub（NOSB：不打进真正的 crypto 驱动二进制包）
+SHARED_CRYPTO_PATH = "{workspace}/workarounds/crypto-stub"
+CONF_AUTOGEN_INCLUDE_PATH = "{uefi}/Platforms/SurfaceDuoFamilyPkg/Include"
+MU_SCHEMA_DIR = "{uefi}/Platforms/SurfaceDuoFamilyPkg/CfgData"
+MU_SCHEMA_FILE_NAME = "SurfaceDuoFamilyPkgCfgData.xml"
+
+[ipsw]
+# K-2: iPhone X（iPhone10,3 / D22AP）的 iOS 16.7.16。本机副本在
+# ~/work1/ipsw/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw；
+# 传 --ipsw 时以命令行为准，这里的 url 只作默认远端源。
+url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
+product = "iPhone10,3"
+version = "16.7.16"
+build = "20H392"
+device_class = "d22ap"
+# ipsw.me / iPhone10,3：platform t8015（A11），cpid 32789 = 0x8015，bdid 6。
+# 注意：0x8010 是 t8010（A10），不是 A11 —— 旧 HANDOFF 里的 chip_id 有误，以此为准。
+# 该 IPSW 的 BuildManifest 里 BuildIdentities[].Info 不含 ApChipID/ApBoardID
+# （iOS 16 的格式，只有 DeviceClass），所以这两个值只作记录，匹配时按 DeviceClass。
+chip_id = 0x8015
+board_id = 6
+# 只抽内核与设备树；StaticTrustCache / OS 等留到 M4 再要。
+fetch = ["KernelCache", "DeviceTree"]
+
+[ipsw.sha256]
+# 实测 2026-10-28（本机 IPSW 整体 sha256 = ece1194f…6568fb，与 ipsw.me 一致）。
+# 值是该 IPSW 内两个成员的 sha256：先 `python3 unixnu ipsw fetch` 抽出、再回填。
+"kernelcache.release.iphone10b" = "2d6a13d040aaf87cec09bb6906d43e9bd8cea951e43d1aa1cd62707dfdc5aaec"
+"DeviceTree.d22ap.im4p" = "480e8b0888949b4128b7aa2cd254497581c69e1bafa596a760b2fa955a8a6368"
+
+[kernel]
+defconfig = "mh2lm_defconfig"
+# 归档构建器在内核链接前按序运行；M3 只放链接必需的（核心加密/线程/DT 平台/CPU）。
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmDTPlatform",
+  "build-arm-driver.py ArmCpu",
+  "build-libpthread-kernel.py",
+]
+
+[os]
+# K-2: iPhone X / iOS 16.7.x 用户态 → Darwin 22.6.0 / xnu-8796
+xnu_version = "8796.141.3"
+xnu_revision = "1b191cb58250d0705d8a51287127505aa4bc0789"
+darwin = "22.6.0"
+
+[payload]
+volume = "MH2LMSP"
+# 注意：FV 里的 payload 是 **512 KiB FAT12**（B1，手工镜像，见 NOTES.md），
+# 不是这个值。size_mib 只喂 `unixnu payload`（它写的是整数 MiB 的 FAT32 块设备镜像）；
+# 设 1 是为了让它"吵着失败"（内核 > 0.95 MiB 会直接报错），提示改用 FV 打包脚本。
+size_mib = 1
+loader = "firmware"
+# 菜单里要有 Tools 入口（Advanced Logger 扫码导出靠它），`unixnu payload` 才会写 `[[entry]] tools`。
+tools = true
+title = "LG G8X - XNU"
+dram_size = "0xc0000000"
+panic_screen = false
+timeout = 3
+# TODO(verify): 先按 guacamole 的一套起，等内核跑起来再逐个确认（serial=3 是 guacamole 的）。
+kernel_args = [
+  "debug=0xc",
+  "serial=3",
+  "cpus=8",
+  "keepsyms=1",
+  "rd=ufsroot0",
+  "wdt=-1",
+]
+
+[payload.adt]
+tool = "scripts/make-mh2lm-adt.py"
+# LG G8X 的 ECID 还没读出来（P0-2 的 getvar 里没有）；先 optional。
+unique_chip_id = "optional"
+owned_memory_size = "0xc0000000"
+
+[bootimg.image]
+base = 0x0
+kernel_offset = 0x8000
+# TODO(verify): mh2lm 的内存映射里 "Kernel" 区只有 0x80000000-0x805FFFFF（6 MiB），
+# 和 guacamole 的 42 MiB 完全不同。64 MiB payload ramdisk 放不进这个区，
+# 要么改 mh2lm 的 PlatformMemoryMapLib 扩 Kernel 区，要么改用别的加载方式。
+ramdisk_offset = 0x800000
+abl_base = 0x80000000
+tags_offset = 0x100
+pagesize = 4096
+header_version = 0
