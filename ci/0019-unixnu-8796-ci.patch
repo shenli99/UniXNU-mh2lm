@@ -1146,13 +1146,13 @@ new file mode 100644
 index 0000000..1234567
 --- /dev/null
 +++ b/patches/xnu/904-framebuffer-probes.patch
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,142 @@
 +diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 +index 7193105..abcdefg 100644
 +--- a/osfmk/arm64/start.s
 ++++ b/osfmk/arm64/start.s
 +@@ -460,6 +460,26 @@ LEXT(start_first_cpu)
-+
++ 
 + 	// Unlock the core for debugging
 + 	msr		OSLAR_EL1, xzr
 ++
@@ -1177,7 +1177,7 @@ index 0000000..1234567
 ++	subs	x12, x12, #4
 ++	b.ne	1b
 ++	dsb		sy
-+
++ 
 + 	mov		x20, x0
 + 	mov		x21, #0
 +@@ -468,6 +488,16 @@ LEXT(start_first_cpu)
@@ -1194,12 +1194,12 @@ index 0000000..1234567
 ++	subs	x12, x12, #4
 ++	b.ne	1b
 ++	dsb		sy
-+
-+
++ 
++ 
 + 	// Get the kernel memory parameters from the boot args
 +@@ -500,6 +530,16 @@ LEXT(start_first_cpu)
 + 	mov		sp, x0
-+
++ 
 + 	// Set up interrupt stack pointer
 ++
 ++	// PROBE 4: GREEN - Exception stack set up
@@ -1231,12 +1231,12 @@ index 0000000..1234567
 ++	dsb		sy
 ++
 + 	br		x0
-+
++ 
 + /*
 +@@ -645,6 +695,16 @@ common_start:
 + 	ldr		x1, [x0, SR_RESTORE_TCR_EL1]
 + 	MSR_TCR_EL1_X1
-+
++ 
 ++	// PROBE 6: BLUE - TCR configured
 ++	mov		x10, #0x83000000
 ++	movk	x10, #0x5ff8, lsl #16
@@ -1264,7 +1264,7 @@ index 0000000..1234567
 ++	subs	x12, x12, #4
 ++	b.ne	1b
 ++	dsb		sy
-+
++ 
 + 	// Enable the MMU and caches.
 + #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
 +@@ -794,6 +864,16 @@ common_start:
@@ -1281,6 +1281,6 @@ index 0000000..1234567
 ++	subs	x12, x12, #4
 ++	b.ne	1b
 ++	dsb		sy
-+
++ 
 + #if __ARM_KERNEL_PROTECT__
 + 	/*
