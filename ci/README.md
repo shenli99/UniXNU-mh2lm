@@ -67,8 +67,12 @@ PSCI SYSTEM_RESET。看**重启方式**判断：
 | 3 | `ARM_INIT` | arm_init.c，第一句 | 失败（5–6 s 后 watchdog bite）；根因是固件把 ramdisk 冲成 0xAF，见下 |
 | 4 | `REBASED` | arm_init.c，`arm_slide_rebase_and_sign_image()` 之后 | |
 | 5 | `PE_INIT` | arm_init.c，`PE_init_platform(FALSE)` 之后 | 2026-10-31 实机通过（3 s 正常重启） |
-| 6 | `VM_INIT` | arm_init.c，`arm_vm_init()` 之后 | **当前选中**（3 s） |
+| 6 | `VM_INIT` | arm_init.c，`arm_vm_init()` 之后 | 2026-10-31 实机通过（3 s 正常重启） |
 | 7 | `KVA_CHECK` | start.s，`ret` 之前用 `at s1e1r` 翻译 arm_init 的 KVA，不跳过去 | 2026-10-31：2 s 正常重启 = 翻译成功且 PA 正确 |
+| 8 | `SERIAL_INIT` | arm_init.c，`serial_init()` 之后 | |
+| 9 | `KPRINTF` | arm_init.c，`kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF)` 之后 | |
+| 10 | `PRINTF` | arm_init.c，`PE_init_printf(FALSE)` 之后 | **当前选中**（3 s） |
+| 11 | `MACHINE_STARTUP` | arm_init.c，`machine_startup()` 之前 | |
 
 `MH2LM_PROBE_DUMP_PA`（当前关闭，= 0）：开 MMU 前在第 9、10 条色带位置各画 32 列位图（左边是最高位，白 = 1，灰 = 0）。
 第 9 条 = Mach 头 PA >> 12；第 10 条 = 从 arm_init 的 PA 读出的第一个字。第 10 条没出现 = 那次读内存卡住了。

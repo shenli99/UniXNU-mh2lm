@@ -792,12 +792,12 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..db0b53f
+index 0000000..e44ca03
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,370 @@
 +diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
-+index b87eef7..7da1059 100644
++index b87eef7..56fd5c1 100644
 +--- a/osfmk/arm/arm_init.c
 ++++ b/osfmk/arm/arm_init.c
 +@@ -38,6 +38,7 @@
@@ -836,12 +836,38 @@ index 0000000..db0b53f
 + 
 + 	if (debug_boot_arg) {
 + 		patch_low_glo();
++@@ -537,7 +542,9 @@ arm_init(
++ 
++ 	/* Setup debugging output. */
++ 	const unsigned int serial_exists = serial_init();
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_SERIAL_INIT);
++ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_KPRINTF);
++ 	kprintf("kprintf initialized\n");
++ 
++ 	serialmode = 0;
++@@ -582,6 +589,7 @@ arm_init(
++ 
++ 	/* setup console output */
++ 	PE_init_printf(FALSE);
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_PRINTF);
++ 
++ #if __arm64__
++ #if DEBUG
++@@ -657,6 +665,7 @@ arm_init(
++ 	 * against string vulnerabilities
++ 	 */
++ 	__stack_chk_guard &= ~(0xFFULL << 8);
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_MACHINE_STARTUP);
++ 	machine_startup(args);
++ }
++ 
 +diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
 +new file mode 100644
-+index 0000000..3633f6c
++index 0000000..c478b14
 +--- /dev/null
 ++++ b/osfmk/arm64/mh2lm_probe.h
-+@@ -0,0 +1,58 @@
++@@ -0,0 +1,62 @@
 ++/*
 ++ * mh2lm early boot probes: where the timed reset is placed.
 ++ *
@@ -861,8 +887,12 @@ index 0000000..db0b53f
 ++#define MH2LM_PROBE_AT_PE_INIT          5       /* arm_init.c: after PE_init_platform(FALSE) */
 ++#define MH2LM_PROBE_AT_VM_INIT          6       /* arm_init.c: after arm_vm_init */
 ++#define MH2LM_PROBE_AT_KVA_CHECK        7       /* start.s: before ret, translate arm_init's KVA with AT S1E1R */
+++#define MH2LM_PROBE_AT_SERIAL_INIT      8       /* arm_init.c: after serial_init */
+++#define MH2LM_PROBE_AT_KPRINTF          9       /* arm_init.c: after kernel_startup_initialize_upto(KPRINTF) */
+++#define MH2LM_PROBE_AT_PRINTF           10      /* arm_init.c: after PE_init_printf(FALSE) */
+++#define MH2LM_PROBE_AT_MACHINE_STARTUP  11      /* arm_init.c: just before machine_startup */
 ++
-++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_VM_INIT
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_PRINTF
 ++/* Bands 9-10 (MMU off): Mach header PA and the first word at arm_init's PA, as 32 bit columns. */
 ++#define MH2LM_PROBE_DUMP_PA             0
 ++#define MH2LM_PROBE_RESET_SECONDS       3       /* well inside the secure watchdog window (a 10 s wait was bitten) */
