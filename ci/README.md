@@ -116,3 +116,6 @@ python3 unixnu payload --kernel /tmp/k8796/mach.development.bcm2837.unstripped \
 `iokit_entry` → `PE_init_printf(TRUE)` → `iokit_printf` → `pe_prepare_images()` → `iokit_images` →
 `iokit_before_init` → `InitIOKit()` → `iokit_initiokit` → `ConfigureIOKit()` → `iokit_configured`。
 2026-10-31 二分结果：卡点在 `PE_init_iokit()` 内部（见开发工作区 evidence/p3-bootstrap-bisect）。
+二分到 `ConfigureIOKit()` → `IOPlatformExpertDevice::configureDefaults()`。其中再加了步骤名：
+`pe_defaults_entry` → createNVRAM（`nvram_new` → init → `nvram_init` → attach → `nvram_attach` → start → `nvram_start`）
+→ `pe_nvram_done` → serial-number → `pe_serial_done` → generatePlatformUUID → `pe_uuid_done`。
