@@ -67,7 +67,11 @@ PSCI SYSTEM_RESET。看**重启方式**判断：
 | 4 | `REBASED` | arm_init.c，`arm_slide_rebase_and_sign_image()` 之后 | |
 | 5 | `PE_INIT` | arm_init.c，`PE_init_platform(FALSE)` 之后 | |
 | 6 | `VM_INIT` | arm_init.c，`arm_vm_init()` 之后 | |
-| 7 | `KVA_CHECK` | start.s，`ret` 之前用 `at s1e1r` 翻译 arm_init 的 KVA，不跳过去 | **当前选中**：约 2 s 正常重启 = 翻译正确；约 5 s = 翻到别的 PA；卡住后 bite = 翻译失败 |
+| 7 | `KVA_CHECK` | start.s，`ret` 之前用 `at s1e1r` 翻译 arm_init 的 KVA，不跳过去 | 2026-10-31：2 s 正常重启 = 翻译成功且 PA 正确 |
+
+`MH2LM_PROBE_DUMP_PA = 1`（当前开启）：开 MMU 前在第 9、10 条色带位置各画 32 列位图（左边是最高位，白 = 1，灰 = 0）。
+第 9 条 = Mach 头 PA >> 12；第 10 条 = 从 arm_init 的 PA 读出的第一个字。第 10 条没出现 = 那次读内存卡住了。
+当前重启点是 2（ret 前，5 s），留时间拍照。
 
 **设备仓库不要放 `patches/xnu/` 目录**：format 1 下同名模块设备仓库优先，会整个替换 UniXNU 的 `patches/xnu/`。
 

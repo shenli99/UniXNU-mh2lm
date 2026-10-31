@@ -792,10 +792,10 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..0663c25
+index 0000000..7e71791
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,340 @@
 +diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
 +index b87eef7..7da1059 100644
 +--- a/osfmk/arm/arm_init.c
@@ -838,10 +838,10 @@ index 0000000..0663c25
 + 		patch_low_glo();
 +diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
 +new file mode 100644
-+index 0000000..117811b
++index 0000000..f7fae60
 +--- /dev/null
 ++++ b/osfmk/arm64/mh2lm_probe.h
-+@@ -0,0 +1,56 @@
++@@ -0,0 +1,58 @@
 ++/*
 ++ * mh2lm early boot probes: where the timed reset is placed.
 ++ *
@@ -862,7 +862,9 @@ index 0000000..0663c25
 ++#define MH2LM_PROBE_AT_VM_INIT          6       /* arm_init.c: after arm_vm_init */
 ++#define MH2LM_PROBE_AT_KVA_CHECK        7       /* start.s: before ret, translate arm_init's KVA with AT S1E1R */
 ++
-++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_KVA_CHECK
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_COMMON_START_RET
+++/* Bands 9-10 (MMU off): Mach header PA and the first word at arm_init's PA, as 32 bit columns. */
+++#define MH2LM_PROBE_DUMP_PA             1
 ++#define MH2LM_PROBE_RESET_SECONDS       3       /* well inside the secure watchdog window (a 10 s wait was bitten) */
 ++#define MH2LM_PROBE_TIMEBASE            19200000
 ++
@@ -899,10 +901,10 @@ index 0000000..0663c25
 ++
 ++#endif /* _ARM64_MH2LM_PROBE_H_ */
 +diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
-+index 6bfc3cd..8d0a2ec 100644
++index 6bfc3cd..b78ff38 100644
 +--- a/osfmk/arm64/start.s
 ++++ b/osfmk/arm64/start.s
-+@@ -90,6 +90,61 @@
++@@ -90,6 +90,111 @@
 + #endif /* defined(KERNEL_INTEGRITY_KTRR) */
 + .endmacro
 + 
@@ -940,6 +942,56 @@ index 0000000..0663c25
 ++ */
 ++#include "mh2lm_probe.h"
 ++
+++/*
+++ * Draw x9[31:0] as 32 columns across band \band, MSB on the left:
+++ * white = 1, grey = 0, a 4-pixel black gap before each column.
+++ * MMU off only. Clobbers x1, x10-x17 and the flags.
+++ */
+++.macro MH2LM_PROBE_BITS args, band
+++	ldr		x10, [\args, #0x28]					// Video.v_baseAddr
+++	ldr		x11, [\args, #0x38]					// Video.v_rowBytes
+++	ldr		x12, [\args, #0x48]					// Video.v_height
+++	ldr		x1, [\args, #0x40]					// Video.v_width
+++	lsr		x12, x12, #4						// rows per band
+++	mov		x14, #\band
+++	mul		x14, x14, x12
+++	madd	x10, x14, x11, x10					// first row of the band
+++	lsr		x13, x1, #5							// column width
+++1:
+++	mov		x14, xzr
+++	mov		x15, x10
+++2:
+++	udiv	x16, x14, x13
+++	cmp		x16, #32
+++	b.hs	4f
+++	msub	x17, x16, x13, x14
+++	cmp		x17, #4
+++	b.lo	4f
+++	mov		x17, #31
+++	sub		x17, x17, x16
+++	lsr		x17, x9, x17
+++	tbz		x17, #0, 3f
+++	movz	w17, #0xFFFF
+++	movk	w17, #0xFFFF, lsl #16				// white: 1
+++	b		5f
+++3:
+++	movz	w17, #0x4040
+++	movk	w17, #0xFF40, lsl #16				// grey: 0
+++	b		5f
+++4:
+++	movz	w17, #0x0000
+++	movk	w17, #0xFF00, lsl #16				// black: gap
+++5:
+++	str		w17, [x15], #4
+++	add		x14, x14, #1
+++	cmp		x14, x1
+++	b.lo	2b
+++	add		x10, x10, x11
+++	subs	x12, x12, #1
+++	b.ne	1b
+++	dsb		sy
+++.endmacro
+++
 ++.macro MH2LM_PROBE_RESET seconds=MH2LM_PROBE_RESET_SECONDS
 ++	mrs		x1, CNTPCT_EL0
 ++	movz	x2, #((MH2LM_PROBE_TIMEBASE * \seconds) & 0xFFFF)
@@ -964,7 +1016,7 @@ index 0000000..0663c25
 + /*
 +  * Checks the reset handler for global and CPU-specific reset-assist functions,
 +  * then jumps to the reset handler with boot args and cpu data. This is copied
-+@@ -462,9 +517,11 @@ start_cpu:
++@@ -462,9 +567,11 @@ start_cpu:
 + 	.globl EXT(start_first_cpu)
 + LEXT(start_first_cpu)
 + 
@@ -976,7 +1028,7 @@ index 0000000..0663c25
 + 
 + 	mov		x20, x0
 + 	mov		x21, #0
-+@@ -473,6 +530,7 @@ LEXT(start_first_cpu)
++@@ -473,6 +580,7 @@ LEXT(start_first_cpu)
 + 	adrp	x0, EXT(LowExceptionVectorBase)@page
 + 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 + 	MSR_VBAR_EL1_X0
@@ -984,7 +1036,7 @@ index 0000000..0663c25
 + 
 + 
 + 	// Get the kernel memory parameters from the boot args
-+@@ -487,6 +545,7 @@ LEXT(start_first_cpu)
++@@ -487,6 +595,7 @@ LEXT(start_first_cpu)
 + 	// in ml_parse_cpu_topology(), which happens later in bootstrap.
 + 	msr		TPIDRRO_EL0, xzr
 + 	msr		TPIDR_EL0, xzr
@@ -992,7 +1044,7 @@ index 0000000..0663c25
 + 
 + 	// Set up exception stack pointer
 + 	adrp	x0, EXT(excepstack_top)@page		// Load top of exception stack
-+@@ -510,6 +569,7 @@ LEXT(start_first_cpu)
++@@ -510,6 +619,7 @@ LEXT(start_first_cpu)
 + 	sub		x0, x0, x23
 + 	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
 + 	mov		sp, x0
@@ -1000,7 +1052,7 @@ index 0000000..0663c25
 + 
 + 	// Load address to the C init routine into link register
 + 	adrp	lr, EXT(arm_init)@page
-+@@ -625,6 +685,7 @@ Lbootstrap_tables_ready:
++@@ -625,6 +735,7 @@ Lbootstrap_tables_ready:
 + 	dsb		ish
 + 
 + 
@@ -1008,7 +1060,7 @@ index 0000000..0663c25
 + 	b		common_start
 + 
 + /*
-+@@ -693,6 +754,9 @@ common_start:
++@@ -693,6 +804,9 @@ common_start:
 + 	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED))
 + 	orr		x0, x0, x1
 + 	msr		MAIR_EL1, x0
@@ -1018,13 +1070,26 @@ index 0000000..0663c25
 + 	isb
 + 	tlbi	vmalle1
 + 	dsb		ish
-+@@ -752,10 +816,19 @@ common_start:
++@@ -752,10 +866,32 @@ common_start:
 + 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
 + #endif /* HAS_APPLE_PAC */
 + 
 ++	cbnz	x21, Lmh2lm_probe_8_done
 ++	MH2LM_PROBE_BAR x20, 8, 0x8080, 0xFF80		// 8 grey: final vectors, MMU still off
 ++Lmh2lm_probe_8_done:
+++#if MH2LM_PROBE_DUMP_PA
+++	// Still MMU off. Band 9: PA of the Mach header >> 12 (x23 after the base fix-up).
+++	// Band 10: the first word at arm_init's PA (lr - x22 + x23). If that load
+++	// cannot complete, band 10 never appears.
+++	cbnz	x21, Lmh2lm_dump_done
+++	lsr		x9, x23, #12
+++	MH2LM_PROBE_BITS x20, 9
+++	sub		x9, lr, x22
+++	add		x9, x9, x23
+++	ldr		w9, [x9]
+++	MH2LM_PROBE_BITS x20, 10
+++Lmh2lm_dump_done:
+++#endif
 ++
 + 	// Enable caches, MMU, ROP and JOP
 + 	MOV64   x0, SCTLR_EL1_DEFAULT
@@ -1038,7 +1103,7 @@ index 0000000..0663c25
 + 
 + #if !VMAPPLE
 + 	MOV64   x1, SCTLR_EL1_DEFAULT
-+@@ -821,6 +894,32 @@ common_start:
++@@ -821,6 +957,32 @@ common_start:
 + 	mov	lr, x21
 + #endif
 + 
@@ -1066,7 +1131,7 @@ index 0000000..0663c25
 ++	b		Lmh2lm_kva_fault
 ++#endif
 ++#if MH2LM_PROBE_RESET_AT == MH2LM_PROBE_AT_COMMON_START_RET
-++	MH2LM_PROBE_RESET							// about to return to arm_init (cold boot only)
+++	MH2LM_PROBE_RESET 5							// about to return to arm_init (cold boot only); 5 s to read bands 9-10
 ++#endif
 + 	// Return to arm_init()
 + 	ret
