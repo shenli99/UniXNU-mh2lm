@@ -50,15 +50,20 @@ relink/tree/...                         ← 重新链接的输入：link.filelis
 | 7 | 品红 | TCR、TTBR0/1、MAIR 配好后 |
 | 8 | 灰 | 装最终异常向量后、开 MMU 前 |
 
-开 MMU 之后 framebuffer 没映射，改用**定时重启**当信号：在选中的位置等 `MH2LM_PROBE_RESET_SECONDS`（10 秒）后
-PSCI SYSTEM_RESET。约 10 秒自己重启 = 走到了这个位置；更早重启或一直不重启 = 没走到。
+开 MMU 之后 framebuffer 没映射，改用**定时重启**当信号：在选中的位置等 `MH2LM_PROBE_RESET_SECONDS`（3 秒）后
+PSCI SYSTEM_RESET。看**重启方式**判断：
+
+- 约 3 秒后**正常重启进 Android** = 我们的 PSCI 重启，走到了这个位置；
+- **bsp-kernel + secure watchdog bite**（约 10 秒）= 看门狗咬的，没走到。
+
+延时必须比看门狗窗口短：10 秒时被看门狗抢先（2026-10-31），6 秒时没有。
 位置由补丁里 `osfmk/arm64/mh2lm_probe.h` 的 `MH2LM_PROBE_RESET_AT` 选（一次只启用一个，0 = 关闭）：
 
 | 值 | 名字 | 位置 | 结果 |
 | --- | --- | --- | --- |
 | 1 | `MMU_ON` | start.s，`msr SCTLR_EL1` 之后 | 2026-10-31 实机通过（8 条色带后自动重启） |
 | 2 | `COMMON_START_RET` | start.s，`ret` 回 arm_init 之前 | |
-| 3 | `ARM_INIT` | arm_init.c，第一句 | **当前选中** |
+| 3 | `ARM_INIT` | arm_init.c，第一句 | **当前选中**；10 秒那次被看门狗抢先，无结论 |
 | 4 | `REBASED` | arm_init.c，`arm_slide_rebase_and_sign_image()` 之后 | |
 | 5 | `PE_INIT` | arm_init.c，`PE_init_platform(FALSE)` 之后 | |
 | 6 | `VM_INIT` | arm_init.c，`arm_vm_init()` 之后 | |
