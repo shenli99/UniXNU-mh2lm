@@ -142,5 +142,11 @@ kernel_bootstrap 之后改成 boot-arg `mh2lm_reset=<步骤名>`，只改 ramdis
 - 修复（方案 A）：`source-corecrypto14-bootstrap.patch` 改为 `STARTUP(SYSCTL, STARTUP_RANK_LAST, ...)`。
   `corecrypto_kext_start()` 只需要 zalloc、锁和 `sysctl_register_oid()`（动态注册，SYSCTL 阶段后可用），不需要中断/抢占。
 
+- **更正（2026-10-31，CI 产物 k8796q 核对）**：只改 STARTUP 阶段不够——此前所有内核里都**没有** `_source_corecrypto14_bootstrap`。
+  原因：xnu-8796 的 `makedefs/MakeInc.def` 的 `CFLAGS` 不含 `$(CFLAGS_EXTRA)`（10063 有），build 脚本经 `CFLAGS_EXTRA` 传的
+  `-DXNU_SOURCE_CORECRYPTO14=1`、`-DXNU_NATIVE_PAN=…`、`-DXNU_BOOT_PROGRESS=…` **全部被丢掉**，源码 corecrypto 从未启动，
+  `g_crypto_funcs` 一直是 NULL。修复：新增 `patches/xnu/makeinc-cflags-extra.patch`（照 10063 把 `$(CFLAGS_EXTRA)` 加进 `CFLAGS`）。
+  副作用：`native-arm-pan.patch` 里 `#if XNU_NATIVE_PAN` 的代码此后才真正编进去（defconfig 开了 NATIVE_PAN）。
+
 ### 另一个待解决的问题
 内核从头到尾没有画出过任何文字（`-v`、PE_init_printf(TRUE) 都过了），所以 panic 也看不到。修完根因 2 后单独查。

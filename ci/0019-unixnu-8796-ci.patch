@@ -118,6 +118,38 @@ index 9470a24..c1814d9 100644
 - 	// Unmask external IRQs if we're restarting from non-retention WFI
 + 
 + #if HAS_CLUSTER
+diff --git a/patches/xnu/makeinc-cflags-extra.patch b/patches/xnu/makeinc-cflags-extra.patch
+new file mode 100644
+index 0000000..7eb4762
+--- /dev/null
++++ b/patches/xnu/makeinc-cflags-extra.patch
+@@ -0,0 +1,26 @@
++diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
++index 5bd6f23..a886ba8 100644
++--- a/makedefs/MakeInc.def
+++++ b/makedefs/MakeInc.def
++@@ -551,6 +551,11 @@ CFLAGS_GEN += -fsanitize-ignorelist=$(OBJROOT)/san/kasan-blacklist-$(CURRENT_ARC
++ endif
++ 
++ 
+++# Any extra flags that get passed at the command line during build (as xnu-10063 has).
+++ifeq ($(CFLAGS_EXTRA),)
+++CFLAGS_EXTRA =
+++endif
+++
++ CFLAGS	= $(CFLAGS_GEN) \
++ 		  $($(addsuffix $(CURRENT_MACHINE_CONFIG),MACHINE_FLAGS_$(CURRENT_ARCH_CONFIG)_)) \
++ 		  $($(addsuffix $(CURRENT_ARCH_CONFIG),ARCH_FLAGS_)) \
++@@ -560,7 +565,8 @@ CFLAGS	= $(CFLAGS_GEN) \
++ 		  $(DEPLOYMENT_TARGET_FLAGS) \
++ 		  $(DEPLOYMENT_TARGET_DEFINES) \
++ 		  $(BOUND_CHECKS_DEFINES) \
++-		  $(DEFINES)
+++		  $(DEFINES) \
+++		  $(CFLAGS_EXTRA)
++ 
++ #
++ # Default C++ flags
 diff --git a/patches/xnu/source-corecrypto14-bootstrap.patch b/patches/xnu/source-corecrypto14-bootstrap.patch
 index df9a6c8..2b16293 100644
 --- a/patches/xnu/source-corecrypto14-bootstrap.patch
