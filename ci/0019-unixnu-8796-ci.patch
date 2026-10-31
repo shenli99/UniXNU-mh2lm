@@ -1386,10 +1386,10 @@ index 4dcaa91..aef7ad9 100644
                  '-Wno-unnecessary-virtual-specifier', '-I', str(ROOT / '.cache/xnu-work/osfmk')])
  if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
 diff --git a/scripts/build-xnu-4k-baseline.sh b/scripts/build-xnu-4k-baseline.sh
-index a036489..f7901ee 100755
+index a036489..4652780 100755
 --- a/scripts/build-xnu-4k-baseline.sh
 +++ b/scripts/build-xnu-4k-baseline.sh
-@@ -805,6 +805,13 @@ make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iph
+@@ -805,6 +805,14 @@ make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iph
    CFLAGS_EXTRA="$EXTRA_CFLAGS" "${EXTRA_MAKE_ARGS[@]}" ${XNU_HOST_MAKE_ARGS[@]+"${XNU_HOST_MAKE_ARGS[@]}"} \
    OBJROOT="$ROOT/build/xnu/ios-obj" SYMROOT="$ROOT/build/xnu/ios-sym" DSTROOT="$ROOT/build/xnu/ios-dst"
  if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$CRYPTO_BOOTSTRAP_MODE" = source ]; then
@@ -1399,7 +1399,8 @@ index a036489..f7901ee 100755
 +  SEAL_KERNEL=build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
 +  [ -f "$SEAL_KERNEL" ] || SEAL_KERNEL=${SEAL_KERNEL%.noctf}
 +  # The POST HMAC field is a 10063 source-provider output; 8796's kernel has no marker to seal.
-+  if grep -qa '_source_corecrypto14_bootstrap' "$SEAL_KERNEL" 2>/dev/null; then
++  # grep -a on the 20 MB kernel missed the marker on the macOS runner; test the bytes directly.
++  if python3 -c 'import sys; sys.exit(b"_source_corecrypto14_bootstrap\0" not in open(sys.argv[1], "rb").read())' "$SEAL_KERNEL" 2>/dev/null; then
 +    python3 scripts/seal-source-crypto-kernel.py "$SEAL_KERNEL"
 +  else
 +    echo "seal-source-crypto-kernel.py: no fips HMAC marker in $SEAL_KERNEL; skipped" >&2

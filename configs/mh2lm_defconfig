@@ -13,6 +13,8 @@ CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_DT_PANIC_REGION=y
-CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+# CONFIG_XNU_TRUST_CACHE_RUNTIME is not set
+# trust_cache_runtime_init() panics without the AMFI/Image4 interfaces, which only the
+# prelinked kexts register; this source-only kernel has neither (2026-10-31 bisection).
 CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
 CONFIG_XNU_BUILD_ARCHIVES=y

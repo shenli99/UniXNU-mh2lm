@@ -148,5 +148,17 @@ kernel_bootstrap 之后改成 boot-arg `mh2lm_reset=<步骤名>`，只改 ramdis
   `g_crypto_funcs` 一直是 NULL。修复：新增 `patches/xnu/makeinc-cflags-extra.patch`（照 10063 把 `$(CFLAGS_EXTRA)` 加进 `CFLAGS`）。
   副作用：`native-arm-pan.patch` 里 `#if XNU_NATIVE_PAN` 的代码此后才真正编进去（defconfig 开了 NATIVE_PAN）。
 
+- **验证（2026-10-31）**：k8796r（CFLAGS_EXTRA 生效）+ 本地封 HMAC，`mh2lm_reset=pe_uuid_done` 3 s 正常重启 → 根因 2 修复确认。
+  CI 的封 HMAC 步骤被跳过（`grep -qa` 在 macOS runner 上对 20 MB 内核误判），改成 python 字节查找；未封则 FIPS POST 失败。
+
+### 根因 3：trust cache runtime 需要 AMFI/Image4 接口（已改 defconfig，待验证）
+- 二分：`trust_cache_init` 日志过，`OSKextRemoveKextBootstrap` 日志没到；中间只有 `trust_cache_runtime_init()`、
+  `load_static_trust_cache()`、`STARTUP_SUB_LOCKDOWN`（8796 里没有 LOCKDOWN 启动项）。
+- `trust_cache_runtime_init()`（bsd/kern/kern_trustcache.c:67）：`img4if == NULL` → `panic("image4 interface not available")`，
+  `amfi == NULL` → `panic("amfi interface not available")`。这两个接口由 AppleImage4 / AMFI kext 注册，只有 prelinked kernelcache 才有；
+  我们是纯源码内核，两者都是 NULL → panic → 看不到 → 卡住。
+- `native-trust-cache-runtime.patch` 让 BCM2837 在 `XNU_NATIVE_TRUST_CACHE=1` 时也跑这段（给 prelinked 的 iPadOS 配置用）。
+  修复：`configs/mh2lm_defconfig` 关掉 `CONFIG_XNU_TRUST_CACHE_RUNTIME`（BCM2837 回到原版：不初始化 trust cache runtime）。
+
 ### 另一个待解决的问题
 内核从头到尾没有画出过任何文字（`-v`、PE_init_printf(TRUE) 都过了），所以 panic 也看不到。修完根因 2 后单独查。
