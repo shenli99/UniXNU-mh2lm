@@ -792,10 +792,10 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..2c94e54
+index 0000000..0663c25
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,275 @@
 +diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
 +index b87eef7..7da1059 100644
 +--- a/osfmk/arm/arm_init.c
@@ -838,10 +838,10 @@ index 0000000..2c94e54
 + 		patch_low_glo();
 +diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
 +new file mode 100644
-+index 0000000..d11453e
++index 0000000..117811b
 +--- /dev/null
 ++++ b/osfmk/arm64/mh2lm_probe.h
-+@@ -0,0 +1,55 @@
++@@ -0,0 +1,56 @@
 ++/*
 ++ * mh2lm early boot probes: where the timed reset is placed.
 ++ *
@@ -860,8 +860,9 @@ index 0000000..2c94e54
 ++#define MH2LM_PROBE_AT_REBASED          4       /* arm_init.c: after arm_slide_rebase_and_sign_image */
 ++#define MH2LM_PROBE_AT_PE_INIT          5       /* arm_init.c: after PE_init_platform(FALSE) */
 ++#define MH2LM_PROBE_AT_VM_INIT          6       /* arm_init.c: after arm_vm_init */
+++#define MH2LM_PROBE_AT_KVA_CHECK        7       /* start.s: before ret, translate arm_init's KVA with AT S1E1R */
 ++
-++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_COMMON_START_RET
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_KVA_CHECK
 ++#define MH2LM_PROBE_RESET_SECONDS       3       /* well inside the secure watchdog window (a 10 s wait was bitten) */
 ++#define MH2LM_PROBE_TIMEBASE            19200000
 ++
@@ -898,7 +899,7 @@ index 0000000..2c94e54
 ++
 ++#endif /* _ARM64_MH2LM_PROBE_H_ */
 +diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
-+index 6bfc3cd..b576124 100644
++index 6bfc3cd..8d0a2ec 100644
 +--- a/osfmk/arm64/start.s
 ++++ b/osfmk/arm64/start.s
 +@@ -90,6 +90,61 @@
@@ -939,10 +940,10 @@ index 0000000..2c94e54
 ++ */
 ++#include "mh2lm_probe.h"
 ++
-++.macro MH2LM_PROBE_RESET
+++.macro MH2LM_PROBE_RESET seconds=MH2LM_PROBE_RESET_SECONDS
 ++	mrs		x1, CNTPCT_EL0
-++	movz	x2, #((MH2LM_PROBE_TIMEBASE * MH2LM_PROBE_RESET_SECONDS) & 0xFFFF)
-++	movk	x2, #(((MH2LM_PROBE_TIMEBASE * MH2LM_PROBE_RESET_SECONDS) >> 16) & 0xFFFF), lsl #16
+++	movz	x2, #((MH2LM_PROBE_TIMEBASE * \seconds) & 0xFFFF)
+++	movk	x2, #(((MH2LM_PROBE_TIMEBASE * \seconds) >> 16) & 0xFFFF), lsl #16
 ++	add		x2, x1, x2
 ++1:
 ++	isb
@@ -1037,10 +1038,33 @@ index 0000000..2c94e54
 + 
 + #if !VMAPPLE
 + 	MOV64   x1, SCTLR_EL1_DEFAULT
-+@@ -821,6 +894,9 @@ common_start:
++@@ -821,6 +894,32 @@ common_start:
 + 	mov	lr, x21
 + #endif
 + 
+++#if MH2LM_PROBE_RESET_AT == MH2LM_PROBE_AT_KVA_CHECK
+++	/*
+++	 * Still on the V=P map: ask the MMU to translate lr (arm_init's KVA) without
+++	 * fetching from it. PAR_EL1.F = 1 -> stay here (the watchdog bites);
+++	 * translation to the expected PA (lr - x22 + x23) -> reset after 2 s;
+++	 * translation to another PA -> reset after 5 s.
+++	 */
+++	at		s1e1r, lr
+++	isb
+++	mrs		x9, PAR_EL1
+++	tbnz	x9, #0, Lmh2lm_kva_fault
+++	ubfx	x9, x9, #12, #36					// PAR_EL1.PA[47:12]
+++	sub		x10, lr, x22
+++	add		x10, x10, x23
+++	ubfx	x10, x10, #12, #36
+++	cmp		x9, x10
+++	b.ne	Lmh2lm_kva_wrong_pa
+++	MH2LM_PROBE_RESET 2
+++Lmh2lm_kva_wrong_pa:
+++	MH2LM_PROBE_RESET 5
+++Lmh2lm_kva_fault:
+++	b		Lmh2lm_kva_fault
+++#endif
 ++#if MH2LM_PROBE_RESET_AT == MH2LM_PROBE_AT_COMMON_START_RET
 ++	MH2LM_PROBE_RESET							// about to return to arm_init (cold boot only)
 ++#endif
