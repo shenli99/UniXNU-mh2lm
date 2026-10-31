@@ -792,7 +792,7 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..5f2655d
+index 0000000..ab5dc29
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 @@ -0,0 +1,340 @@
@@ -838,7 +838,7 @@ index 0000000..5f2655d
 + 		patch_low_glo();
 +diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
 +new file mode 100644
-+index 0000000..ed0ed85
++index 0000000..13bcfb0
 +--- /dev/null
 ++++ b/osfmk/arm64/mh2lm_probe.h
 +@@ -0,0 +1,58 @@
@@ -862,7 +862,7 @@ index 0000000..5f2655d
 ++#define MH2LM_PROBE_AT_VM_INIT          6       /* arm_init.c: after arm_vm_init */
 ++#define MH2LM_PROBE_AT_KVA_CHECK        7       /* start.s: before ret, translate arm_init's KVA with AT S1E1R */
 ++
-++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_NONE
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_PE_INIT
 ++/* Bands 9-10 (MMU off): Mach header PA and the first word at arm_init's PA, as 32 bit columns. */
 ++#define MH2LM_PROBE_DUMP_PA             0
 ++#define MH2LM_PROBE_RESET_SECONDS       3       /* well inside the secure watchdog window (a 10 s wait was bitten) */
