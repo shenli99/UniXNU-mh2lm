@@ -852,10 +852,25 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..b2dc99a
+index 0000000..cd0934b
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,564 @@
++diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
++index 201050b..b596af7 100644
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -580,7 +580,9 @@ bsd_init(void)
++ #if DEBUG_BSDINIT
++ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
++ #else
++-#define bsd_init_kprintf(x, ...)
+++/* mh2lm bring-up: each step is a mh2lm_reset target, e.g. mh2lm_reset=calling_vfsinit */
+++extern void mh2lm_probe_step(const char *message);
+++#define bsd_init_kprintf(x, ...) mh2lm_probe_step(x)
++ #endif
++ 
++ 	throttle_init();
 +diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.cpp
 +index 7a32a23..a76ad86 100644
 +--- a/iokit/Kernel/IOPlatformExpert.cpp
@@ -1274,7 +1289,7 @@ index 0000000..b2dc99a
 + 	ret
 + 
 +diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
-+index b790d0d..e9c4e5d 100644
++index b790d0d..2a17f27 100644
 +--- a/osfmk/kern/startup.c
 ++++ b/osfmk/kern/startup.c
 +@@ -78,6 +78,7 @@
@@ -1285,7 +1300,7 @@ index 0000000..b2dc99a
 + #include <kern/coalition.h>
 + #include <kern/cpu_number.h>
 + #include <kern/cpu_quiesce.h>
-+@@ -218,9 +219,35 @@ extern int serverperfmode;
++@@ -218,9 +219,46 @@ extern int serverperfmode;
 + 
 + TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
 + 
@@ -1309,7 +1324,18 @@ index 0000000..b2dc99a
 ++			target[0] = '\0';
 ++		}
 ++	}
-++	if (target[0] != '\0' && strcmp(message, target) == 0) {
+++	if (target[0] == '\0') {
+++		return;
+++	}
+++	/* Boot-args cannot carry spaces or newlines: a space matches '_', a trailing newline is ignored. */
+++	size_t i = 0;
+++	for (; target[i] != '\0'; i++) {
+++		char c = message[i] == ' ' ? '_' : message[i];
+++		if (c != target[i]) {
+++			return;
+++		}
+++	}
+++	if (message[i] == '\0' || (message[i] == '\n' && message[i + 1] == '\0')) {
 ++		mh2lm_probe_reset();
 ++	}
 ++}
@@ -1321,7 +1347,7 @@ index 0000000..b2dc99a
 + 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
 + 	    startup_phase >= STARTUP_SUB_KPRINTF) {
 + 		kprintf("kernel_bootstrap: %s\n", message);
-+@@ -231,6 +258,7 @@ kernel_bootstrap_log(const char *message)
++@@ -231,6 +269,7 @@ kernel_bootstrap_log(const char *message)
 + static inline void
 + kernel_bootstrap_thread_log(const char *message)
 + {
@@ -1329,8 +1355,18 @@ index 0000000..b2dc99a
 + 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
 + 	    startup_phase >= STARTUP_SUB_KPRINTF) {
 + 		kprintf("kernel_bootstrap_thread: %s\n", message);
++@@ -787,7 +826,9 @@ kernel_bootstrap_thread(void)
++ 	 *	Start the user bootstrap.
++ 	 */
++ #ifdef  MACH_BSD
+++	mh2lm_probe_step("bsd_init_entry");
++ 	bsd_init();
+++	mh2lm_probe_step("bsd_init_done");
++ #endif
++ 
++ 
 +diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
-+index e86dd5c..071f29c 100644
++index e86dd5c..dfcc4c0 100644
 +--- a/pexpert/arm/pe_init.c
 ++++ b/pexpert/arm/pe_init.c
 +@@ -22,6 +22,8 @@
@@ -1369,6 +1405,18 @@ index 0000000..b2dc99a
 ++	mh2lm_probe_step("iokit_initiokit");
 + 	ConfigureIOKit();
 ++	mh2lm_probe_step("iokit_configured");
++ }
++ 
++ void
++@@ -387,8 +395,11 @@ PE_lockdown_iokit(void)
++ 	 * against a kernel which has not yet enabled the full set of available
++ 	 * hardware protections.
++ 	 */
+++	mh2lm_probe_step("iokit_lockdown_entry");
++ 	zalloc_iokit_lockdown();
+++	mh2lm_probe_step("iokit_lockdown_zalloc");
++ 	StartIOKitMatching();
+++	mh2lm_probe_step("iokit_matching_started");
 + }
 + 
 + void

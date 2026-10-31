@@ -123,3 +123,8 @@ python3 unixnu payload --kernel /tmp/k8796/mach.development.bcm2837.unstripped \
 2026-10-31：二分到 `generatePlatformUUID()` → `SHA1Init` 时 `g_crypto_funcs` 为空（源码 corecrypto 在 EARLY_BOOT 才注册，晚于 PE_init_iokit）。
 修复：`patches/xnu/source-corecrypto14-bootstrap.patch` 改为 `STARTUP(SYSCTL, STARTUP_RANK_LAST, ...)`。验证用 `mh2lm_reset=pe_uuid_done`。
 更正：k8796q 里仍无 `_source_corecrypto14_bootstrap`——8796 的 MakeInc.def 不使用 `CFLAGS_EXTRA`，所有 `-DXNU_*` 被丢弃。新增 `patches/xnu/makeinc-cflags-extra.patch`。验证：`llvm-nm kernel | grep _source_corecrypto14_bootstrap` 应有，启动表符号 `___startup_SYSCTL_entry_source_corecrypto14_bootstrap_*`。
+
+`PE_lockdown_iokit()` 之后的步骤名：`iokit_lockdown_entry` → `zalloc_iokit_lockdown()` → `iokit_lockdown_zalloc` → `StartIOKitMatching()`
+→ `iokit_matching_started` → … → `bsd_init_entry` → `bsd_init()` → `bsd_init_done`。
+`bsd_init()` 里原有的 `bsd_init_kprintf("calling xxx\n")`（35 处）也都是步骤名；boot-arg 里空格写成 `_`、末尾换行忽略，
+例如 `mh2lm_reset=calling_vfsinit`、`mh2lm_reset=calling_setconf`、`mh2lm_reset=vfs_mountroot`。
