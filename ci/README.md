@@ -62,8 +62,8 @@ PSCI SYSTEM_RESET。看**重启方式**判断：
 | 值 | 名字 | 位置 | 结果 |
 | --- | --- | --- | --- |
 | 1 | `MMU_ON` | start.s，`msr SCTLR_EL1` 之后 | 2026-10-31 实机通过（8 条色带后自动重启） |
-| 2 | `COMMON_START_RET` | start.s，`ret` 回 arm_init 之前 | |
-| 3 | `ARM_INIT` | arm_init.c，第一句 | **当前选中**；10 秒那次被看门狗抢先，无结论 |
+| 2 | `COMMON_START_RET` | start.s，`ret` 回 arm_init 之前（仅冷启动） | **当前选中** |
+| 3 | `ARM_INIT` | arm_init.c，第一句 | 10 s 与 3 s 都是黑屏 4–5 s 后 watchdog bite，未正常重启 |
 | 4 | `REBASED` | arm_init.c，`arm_slide_rebase_and_sign_image()` 之后 | |
 | 5 | `PE_INIT` | arm_init.c，`PE_init_platform(FALSE)` 之后 | |
 | 6 | `VM_INIT` | arm_init.c，`arm_vm_init()` 之后 | |

@@ -792,7 +792,7 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..5b63861
+index 0000000..2c94e54
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 @@ -0,0 +1,251 @@
@@ -838,7 +838,7 @@ index 0000000..5b63861
 + 		patch_low_glo();
 +diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
 +new file mode 100644
-+index 0000000..d5c1784
++index 0000000..d11453e
 +--- /dev/null
 ++++ b/osfmk/arm64/mh2lm_probe.h
 +@@ -0,0 +1,55 @@
@@ -861,7 +861,7 @@ index 0000000..5b63861
 ++#define MH2LM_PROBE_AT_PE_INIT          5       /* arm_init.c: after PE_init_platform(FALSE) */
 ++#define MH2LM_PROBE_AT_VM_INIT          6       /* arm_init.c: after arm_vm_init */
 ++
-++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_ARM_INIT
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_COMMON_START_RET
 ++#define MH2LM_PROBE_RESET_SECONDS       3       /* well inside the secure watchdog window (a 10 s wait was bitten) */
 ++#define MH2LM_PROBE_TIMEBASE            19200000
 ++
