@@ -792,15 +792,116 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..c08255d
+index 0000000..80ba31e
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,251 @@
++diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
++index b87eef7..7da1059 100644
++--- a/osfmk/arm/arm_init.c
+++++ b/osfmk/arm/arm_init.c
++@@ -38,6 +38,7 @@
++ #include <kern/timer_queue.h>
++ #include <kern/processor.h>
++ #include <kern/startup.h>
+++#include <arm64/mh2lm_probe.h>
++ #include <kern/debug.h>
++ #include <prng/random.h>
++ #include <kern/ecc.h>
++@@ -346,9 +347,11 @@ arm_init(
++ 	DTEntry chosen = NULL;
++ 	unsigned int dt_entry_size = 0;
++ 
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_ARM_INIT);
++ 	arm_setup_pre_sign();
++ 
++ 	arm_slide_rebase_and_sign_image();
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_REBASED);
++ 
++ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
++ 	const_boot_args = *args;
++@@ -362,6 +365,7 @@ arm_init(
++ #endif /* defined(HAS_APPLE_PAC) */
++ 
++ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_PE_INIT);
++ 
++ #if __arm64__
++ 	configure_timer_apple_regs();
++@@ -524,6 +528,7 @@ arm_init(
++ #endif  /* __ARM_PAN_AVAILABLE__ */
++ 
++ 	arm_vm_init(xmaxmem, args);
+++	MH2LM_PROBE_POINT(MH2LM_PROBE_AT_VM_INIT);
++ 
++ 	if (debug_boot_arg) {
++ 		patch_low_glo();
++diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
++new file mode 100644
++index 0000000..0186526
++--- /dev/null
+++++ b/osfmk/arm64/mh2lm_probe.h
++@@ -0,0 +1,55 @@
+++/*
+++ * mh2lm early boot probes: where the timed reset is placed.
+++ *
+++ * Once the MMU is on the frame buffer is not mapped, so the signal is time:
+++ * the CPU waits MH2LM_PROBE_RESET_SECONDS and then calls PSCI SYSTEM_RESET.
+++ * A reboot after that delay means the boot got to the selected point.
+++ * Exactly one point is active; 0 disables the reset.
+++ */
+++#ifndef _ARM64_MH2LM_PROBE_H_
+++#define _ARM64_MH2LM_PROBE_H_
+++
+++#define MH2LM_PROBE_AT_NONE             0
+++#define MH2LM_PROBE_AT_MMU_ON           1       /* start.s: right after msr SCTLR_EL1 */
+++#define MH2LM_PROBE_AT_COMMON_START_RET 2       /* start.s: before the ret to arm_init */
+++#define MH2LM_PROBE_AT_ARM_INIT         3       /* arm_init.c: first statement */
+++#define MH2LM_PROBE_AT_REBASED          4       /* arm_init.c: after arm_slide_rebase_and_sign_image */
+++#define MH2LM_PROBE_AT_PE_INIT          5       /* arm_init.c: after PE_init_platform(FALSE) */
+++#define MH2LM_PROBE_AT_VM_INIT          6       /* arm_init.c: after arm_vm_init */
+++
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_ARM_INIT
+++#define MH2LM_PROBE_RESET_SECONDS       10
+++#define MH2LM_PROBE_TIMEBASE            19200000
+++
+++#ifndef __ASSEMBLER__
+++#include <stdint.h>
+++
+++/* Same sequence as MH2LM_PROBE_RESET in start.s. */
+++static inline void __attribute__((noreturn, always_inline))
+++mh2lm_probe_reset(void)
+++{
+++	uint64_t now, end;
+++
+++	__asm__ volatile ("isb\n\tmrs %0, CNTPCT_EL0" : "=r"(now));
+++	end = now + (uint64_t)MH2LM_PROBE_TIMEBASE * MH2LM_PROBE_RESET_SECONDS;
+++	do {
+++		__asm__ volatile ("isb\n\tmrs %0, CNTPCT_EL0" : "=r"(now));
+++	} while (now < end);
+++	__asm__ volatile (
+++		"mov	x0, #0x0009\n"
+++		"movk	x0, #0x8400, lsl #16\n"         /* PSCI_SYSTEM_RESET */
+++		"mov	x1, xzr\n"
+++		"mov	x2, xzr\n"
+++		"mov	x3, xzr\n"
+++		"smc	#0\n"
+++		::: "x0", "x1", "x2", "x3", "memory");
+++	for (;;) {
+++		__asm__ volatile ("wfe");
+++	}
+++}
+++
+++#define MH2LM_PROBE_POINT(point) \
+++	do { if (MH2LM_PROBE_RESET_AT == (point)) { mh2lm_probe_reset(); } } while (0)
+++#endif /* __ASSEMBLER__ */
+++
+++#endif /* _ARM64_MH2LM_PROBE_H_ */
 +diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
-+index 6bfc3cd..27c84fe 100644
++index 6bfc3cd..b576124 100644
 +--- a/osfmk/arm64/start.s
 ++++ b/osfmk/arm64/start.s
-+@@ -90,6 +90,65 @@
++@@ -90,6 +90,61 @@
 + #endif /* defined(KERNEL_INTEGRITY_KTRR) */
 + .endmacro
 + 
@@ -833,14 +934,10 @@ index 0000000..c08255d
 ++.endmacro
 ++
 ++/*
-++ * Right after the MMU is on the frame buffer is no longer mapped, so the signal
-++ * is time: wait MH2LM_PROBE_RESET_SECONDS, then PSCI SYSTEM_RESET. A reboot on
-++ * its own after that delay means the CPU got through the MMU enable. Set
-++ * MH2LM_PROBE_RESET_AFTER_MMU to 0 to let the boot continue past this point.
+++ * After the MMU is on the frame buffer is no longer mapped, so the signal is
+++ * time: the reset point is selected by MH2LM_PROBE_RESET_AT in mh2lm_probe.h.
 ++ */
-++#define MH2LM_PROBE_RESET_AFTER_MMU 1
-++#define MH2LM_PROBE_RESET_SECONDS 6
-++#define MH2LM_PROBE_TIMEBASE 19200000
+++#include "mh2lm_probe.h"
 ++
 ++.macro MH2LM_PROBE_RESET
 ++	mrs		x1, CNTPCT_EL0
@@ -866,7 +963,7 @@ index 0000000..c08255d
 + /*
 +  * Checks the reset handler for global and CPU-specific reset-assist functions,
 +  * then jumps to the reset handler with boot args and cpu data. This is copied
-+@@ -462,9 +521,11 @@ start_cpu:
++@@ -462,9 +517,11 @@ start_cpu:
 + 	.globl EXT(start_first_cpu)
 + LEXT(start_first_cpu)
 + 
@@ -878,7 +975,7 @@ index 0000000..c08255d
 + 
 + 	mov		x20, x0
 + 	mov		x21, #0
-+@@ -473,6 +534,7 @@ LEXT(start_first_cpu)
++@@ -473,6 +530,7 @@ LEXT(start_first_cpu)
 + 	adrp	x0, EXT(LowExceptionVectorBase)@page
 + 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 + 	MSR_VBAR_EL1_X0
@@ -886,7 +983,7 @@ index 0000000..c08255d
 + 
 + 
 + 	// Get the kernel memory parameters from the boot args
-+@@ -487,6 +549,7 @@ LEXT(start_first_cpu)
++@@ -487,6 +545,7 @@ LEXT(start_first_cpu)
 + 	// in ml_parse_cpu_topology(), which happens later in bootstrap.
 + 	msr		TPIDRRO_EL0, xzr
 + 	msr		TPIDR_EL0, xzr
@@ -894,7 +991,7 @@ index 0000000..c08255d
 + 
 + 	// Set up exception stack pointer
 + 	adrp	x0, EXT(excepstack_top)@page		// Load top of exception stack
-+@@ -510,6 +573,7 @@ LEXT(start_first_cpu)
++@@ -510,6 +569,7 @@ LEXT(start_first_cpu)
 + 	sub		x0, x0, x23
 + 	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
 + 	mov		sp, x0
@@ -902,7 +999,7 @@ index 0000000..c08255d
 + 
 + 	// Load address to the C init routine into link register
 + 	adrp	lr, EXT(arm_init)@page
-+@@ -625,6 +689,7 @@ Lbootstrap_tables_ready:
++@@ -625,6 +685,7 @@ Lbootstrap_tables_ready:
 + 	dsb		ish
 + 
 + 
@@ -910,7 +1007,7 @@ index 0000000..c08255d
 + 	b		common_start
 + 
 + /*
-+@@ -693,6 +758,9 @@ common_start:
++@@ -693,6 +754,9 @@ common_start:
 + 	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED))
 + 	orr		x0, x0, x1
 + 	msr		MAIR_EL1, x0
@@ -920,7 +1017,7 @@ index 0000000..c08255d
 + 	isb
 + 	tlbi	vmalle1
 + 	dsb		ish
-+@@ -752,10 +820,19 @@ common_start:
++@@ -752,10 +816,19 @@ common_start:
 + 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
 + #endif /* HAS_APPLE_PAC */
 + 
@@ -932,14 +1029,24 @@ index 0000000..c08255d
 + 	MOV64   x0, SCTLR_EL1_DEFAULT
 + 	MSR_SCTLR_EL1_X0
 + 	isb		sy
-++#if MH2LM_PROBE_RESET_AFTER_MMU
+++#if MH2LM_PROBE_RESET_AT == MH2LM_PROBE_AT_MMU_ON
 ++	cbnz	x21, Lmh2lm_probe_reset_done
-++	MH2LM_PROBE_RESET							// 9: MMU and caches on (reset after the delay)
+++	MH2LM_PROBE_RESET							// MMU and caches on
 ++Lmh2lm_probe_reset_done:
 ++#endif
 + 
 + #if !VMAPPLE
 + 	MOV64   x1, SCTLR_EL1_DEFAULT
++@@ -821,6 +894,9 @@ common_start:
++ 	mov	lr, x21
++ #endif
++ 
+++#if MH2LM_PROBE_RESET_AT == MH2LM_PROBE_AT_COMMON_START_RET
+++	MH2LM_PROBE_RESET							// about to return to arm_init (cold boot only)
+++#endif
++ 	// Return to arm_init()
++ 	ret
++ 
 diff --git a/scripts/build-arm-driver.py b/scripts/build-arm-driver.py
 index 4dcaa91..aef7ad9 100644
 --- a/scripts/build-arm-driver.py
