@@ -114,3 +114,33 @@ M2 的验收只是 `DARWINBOOT: inputs validated; exiting boot services`。
   随后设备复位回 Android —— stub 内核没有真正的内核代码，复位是预期行为。**即 DarwinBoot 已完成输入校验并退出 boot services**。
 - 待办：为了留下"日志证据"，给 DarwinBoot 加一个可选的 handoff 前 stall（几秒），让屏幕上的
   `DARWINBOOT: inputs validated; exiting boot services` 能被拍到；之后 M2 就可以正式勾掉，进入真内核（云端）。
+
+## 2026-10-31：M3 卡点的两个根因（探针二分）
+
+方法：`ci/0019` 里的 `patches/xnu/zzzz-mh2lm-early-boot-probes.patch`（用法见 `ci/README.md`）。
+MMU 开之前画色带；之后用"等 3 s → PSCI SYSTEM_RESET"当信号（3 s 正常重启进 Android = 走到了；卡住/watchdog bite = 没走到）。
+kernel_bootstrap 之后改成 boot-arg `mh2lm_reset=<步骤名>`，只改 ramdisk 里 unixnu.toml 的 args，不用重跑 CI。
+**注意**：步骤名必须先用 `strings kernel | grep -x NAME` 确认存在（`sfi_init`、`load_context` 在本内核里不存在，曾导致两轮误判）。
+重启延时必须 < secure watchdog 窗口（10 s 会被看门狗抢先，3 s 安全）。
+
+### 根因 1：固件把 payload 冲成 0xAF（已修，已验证）
+- 现象：start.s 全部通过，ret 进 arm_init 就卡住，5–6 s 后 watchdog bite。
+- 位图探针读出 arm_init 处内存 = `0xAFAFAFAF`（Mu DEBUG 固件 `PcdDebugClearMemoryValue`，释放内存时的填充）。
+- DarwinBoot 诊断：内核文件刚从 ramdisk 读出来就有 ~14 MiB 是 0xAF。
+- 原因：Mu `MemoryMapLib` 里我们加的 "DTB Window" 0x82400000–0x85700000（同时包含 ABL 放的 ramdisk 0x835ff800）
+  类型写成了 `Conv`，DXE 分配器在 ramdisk 驱动认领之前就把这些页分配/释放过。
+- 修复：改成 `BsData`（Mu-Silicium 分支 `mh2lm-dtb-window`，e84e094）。验证：0xAF 计数 0，arm_init 处 = 0xD10343FF。
+
+### 根因 2：源码 corecrypto 注册晚于第一次 SHA1 调用（修复待验证）
+- 二分路径：arm_init 全过 → kernel_bootstrap 主线程全过 → bootstrap 线程 `PE_init_iokit()` → `InitIOKit()` 过 →
+  `ConfigureIOKit()` → `IOPlatformExpertDevice::configureDefaults()` → createNVRAM 过、serial 过 → **`generatePlatformUUID()` 卡住**。
+- `generatePlatformUUID()` 用 `/chosen` 的 `unique-chip-id` + `chip-id` 算 SHA1 → `SHA1Init` 解引用 `g_crypto_funcs`。
+- 我们用 `CONFIG_XNU_CRYPTO_BOOTSTRAP="source"`，源码 corecrypto 在 `STARTUP(EARLY_BOOT)` 才注册；
+  而 `PE_init_iokit()`（startup.c:717）在 `STARTUP_SUB_EARLY_BOOT`（startup.c:726）之前 → 空指针 → 异常 → 控制台还没出字，看起来是卡住。
+- 上游/sheng 用的是 `prelinked`（kernelcache 里的原版 corecrypto），所以没撞上；ios-sweet 没有 corecrypto，
+  同类 NULL `g_crypto_funcs` 逐个换成 BearSSL。ios-sweet 也证明 ADT 必须有 unique-chip-id/chip-id（否则无 IOPlatformUUID，datamigrator 无限迁移），不能删。
+- 修复（方案 A）：`source-corecrypto14-bootstrap.patch` 改为 `STARTUP(SYSCTL, STARTUP_RANK_LAST, ...)`。
+  `corecrypto_kext_start()` 只需要 zalloc、锁和 `sysctl_register_oid()`（动态注册，SYSCTL 阶段后可用），不需要中断/抢占。
+
+### 另一个待解决的问题
+内核从头到尾没有画出过任何文字（`-v`、PE_init_printf(TRUE) 都过了），所以 panic 也看不到。修完根因 2 后单独查。

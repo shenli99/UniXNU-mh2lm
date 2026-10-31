@@ -119,3 +119,6 @@ python3 unixnu payload --kernel /tmp/k8796/mach.development.bcm2837.unstripped \
 二分到 `ConfigureIOKit()` → `IOPlatformExpertDevice::configureDefaults()`。其中再加了步骤名：
 `pe_defaults_entry` → createNVRAM（`nvram_new` → init → `nvram_init` → attach → `nvram_attach` → start → `nvram_start`）
 → `pe_nvram_done` → serial-number → `pe_serial_done` → generatePlatformUUID → `pe_uuid_done`。
+
+2026-10-31：二分到 `generatePlatformUUID()` → `SHA1Init` 时 `g_crypto_funcs` 为空（源码 corecrypto 在 EARLY_BOOT 才注册，晚于 PE_init_iokit）。
+修复：`patches/xnu/source-corecrypto14-bootstrap.patch` 改为 `STARTUP(SYSCTL, STARTUP_RANK_LAST, ...)`。验证用 `mh2lm_reset=pe_uuid_done`。

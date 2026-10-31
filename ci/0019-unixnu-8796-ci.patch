@@ -118,6 +118,34 @@ index 9470a24..c1814d9 100644
 - 	// Unmask external IRQs if we're restarting from non-retention WFI
 + 
 + #if HAS_CLUSTER
+diff --git a/patches/xnu/source-corecrypto14-bootstrap.patch b/patches/xnu/source-corecrypto14-bootstrap.patch
+index df9a6c8..2b16293 100644
+--- a/patches/xnu/source-corecrypto14-bootstrap.patch
++++ b/patches/xnu/source-corecrypto14-bootstrap.patch
+@@ -1,8 +1,8 @@
+ diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
+-index c52f0ab..412c167 100644
++index c52f0ab..2192b5d 100644
+ --- a/osfmk/prng/prng_random.c
+ +++ b/osfmk/prng/prng_random.c
+-@@ -420,3 +420,35 @@ random_bool_gen_bits(struct bool_gen * bg, unsigned int * buffer, unsigned int c
++@@ -420,3 +420,41 @@ random_bool_gen_bits(struct bool_gen * bg, unsigned int * buffer, unsigned int c
+  	}
+  	return rbits;
+  }
+@@ -36,5 +36,11 @@ index c52f0ab..412c167 100644
+ +		panic("source corecrypto initialization failed: %d", source_corecrypto14_status);
+ +	}
+ +}
+-+STARTUP(EARLY_BOOT, STARTUP_RANK_FIRST, source_corecrypto14_bootstrap);
+++/*
+++ * SYSCTL, not EARLY_BOOT: PE_init_iokit() runs between the two and already hashes with
+++ * libkern SHA1 (IOPlatformExpertDevice::generatePlatformUUID from /chosen chip ids),
+++ * which dereferences g_crypto_funcs. corecrypto_kext_start() only needs zalloc, locks
+++ * and sysctl_register_oid(), all available once the SYSCTL subsystem has started.
+++ */
+++STARTUP(SYSCTL, STARTUP_RANK_LAST, source_corecrypto14_bootstrap);
+ +#endif
 diff --git a/patches/xnu/source-machine-layer.patch b/patches/xnu/source-machine-layer.patch
 index 8c419b5..f6f2d76 100644
 --- a/patches/xnu/source-machine-layer.patch
