@@ -792,10 +792,10 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..347cd0b
+index 0000000..1d2333f
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,424 @@
+@@ -0,0 +1,469 @@
 +diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
 +index b87eef7..56fd5c1 100644
 +--- a/osfmk/arm/arm_init.c
@@ -1167,7 +1167,7 @@ index 0000000..347cd0b
 + 	ret
 + 
 +diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
-+index b790d0d..1dab287 100644
++index b790d0d..e9c4e5d 100644
 +--- a/osfmk/kern/startup.c
 ++++ b/osfmk/kern/startup.c
 +@@ -78,6 +78,7 @@
@@ -1178,7 +1178,7 @@ index 0000000..347cd0b
 + #include <kern/coalition.h>
 + #include <kern/cpu_number.h>
 + #include <kern/cpu_quiesce.h>
-+@@ -218,9 +219,33 @@ extern int serverperfmode;
++@@ -218,9 +219,35 @@ extern int serverperfmode;
 + 
 + TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
 + 
@@ -1187,9 +1187,11 @@ index 0000000..347cd0b
 ++ * probe delay) when kernel_bootstrap{,_thread}_log() is called with that step
 ++ * name, e.g. mh2lm_reset=sched_init or a startup subsystem name such as
 ++ * mh2lm_reset=zalloc. A bisection then only needs a different boot-arg.
+++ * Other files call it as mh2lm_probe_step() for their own named steps.
 ++ */
-++static void
-++mh2lm_bootstrap_step(const char *message)
+++void mh2lm_probe_step(const char *message);
+++void
+++mh2lm_probe_step(const char *message)
 ++{
 ++	static int  parsed;
 ++	static char target[64];
@@ -1208,18 +1210,61 @@ index 0000000..347cd0b
 + static inline void
 + kernel_bootstrap_log(const char *message)
 + {
-++	mh2lm_bootstrap_step(message);
+++	mh2lm_probe_step(message);
 + 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
 + 	    startup_phase >= STARTUP_SUB_KPRINTF) {
 + 		kprintf("kernel_bootstrap: %s\n", message);
-+@@ -231,6 +256,7 @@ kernel_bootstrap_log(const char *message)
++@@ -231,6 +258,7 @@ kernel_bootstrap_log(const char *message)
 + static inline void
 + kernel_bootstrap_thread_log(const char *message)
 + {
-++	mh2lm_bootstrap_step(message);
+++	mh2lm_probe_step(message);
 + 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
 + 	    startup_phase >= STARTUP_SUB_KPRINTF) {
 + 		kprintf("kernel_bootstrap_thread: %s\n", message);
++diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
++index e86dd5c..071f29c 100644
++--- a/pexpert/arm/pe_init.c
+++++ b/pexpert/arm/pe_init.c
++@@ -22,6 +22,8 @@
++ 
++ #include <pexpert/arm64/board_config.h>
++ 
+++extern void mh2lm_probe_step(const char *message); /* osfmk/kern/startup.c, mh2lm bring-up */
+++
++ 
++ /* extern references */
++ extern void     pe_identify_machine(boot_args *bootArgs);
++@@ -255,7 +257,9 @@ PE_init_iokit(void)
++ 	uint32_t        load_kernel_start_value = 0;
++ 	uint32_t        populate_registry_time_value = 0;
++ 
+++	mh2lm_probe_step("iokit_entry");
++ 	PE_init_printf(TRUE);
+++	mh2lm_probe_step("iokit_printf");
++ 
++ 	printf("iBoot version: %s\n", iBoot_version);
++ #if defined(TARGET_OS_OSX) && defined(__arm64__)
++@@ -280,6 +284,7 @@ PE_init_iokit(void)
++ 	}
++ 
++ 	pe_prepare_images();
+++	mh2lm_probe_step("iokit_images");
++ 
++ 	scale = PE_state.video.v_scale;
++ 	flip = 1;
++@@ -368,8 +373,11 @@ PE_init_iokit(void)
++ 		KDBG_RELEASE(IOKDBG_CODE(DBG_BOOTER, 0), start_time_value, debug_wait_start_value, load_kernel_start_value, populate_registry_time_value);
++ 	}
++ 
+++	mh2lm_probe_step("iokit_before_init");
++ 	InitIOKit(PE_state.deviceTreeHead);
+++	mh2lm_probe_step("iokit_initiokit");
++ 	ConfigureIOKit();
+++	mh2lm_probe_step("iokit_configured");
++ }
++ 
++ void
 diff --git a/scripts/build-arm-driver.py b/scripts/build-arm-driver.py
 index 4dcaa91..aef7ad9 100644
 --- a/scripts/build-arm-driver.py

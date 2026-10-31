@@ -111,3 +111,8 @@ python3 unixnu payload --kernel /tmp/k8796/mach.development.bcm2837.unstripped \
 例如 `mh2lm_reset=vm_mem_bootstrap`、`mh2lm_reset=sched_init`、`mh2lm_reset=machine_init`，
 也可以是 startup 子系统名（`kernel_startup_initialize_upto` 打印的那些）。
 改 ramdisk 里 `EFI/UniXNU/unixnu.toml` 的 `args` 即可，不需要再跑 CI。
+
+`PE_init_iokit()`（`pexpert/arm/pe_init.c`）里另有 6 个步骤名，同样用 `mh2lm_reset=` 选：
+`iokit_entry` → `PE_init_printf(TRUE)` → `iokit_printf` → `pe_prepare_images()` → `iokit_images` →
+`iokit_before_init` → `InitIOKit()` → `iokit_initiokit` → `ConfigureIOKit()` → `iokit_configured`。
+2026-10-31 二分结果：卡点在 `PE_init_iokit()` 内部（见开发工作区 evidence/p3-bootstrap-bisect）。
