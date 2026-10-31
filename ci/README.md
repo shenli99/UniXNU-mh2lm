@@ -62,16 +62,19 @@ PSCI SYSTEM_RESET。看**重启方式**判断：
 | 值 | 名字 | 位置 | 结果 |
 | --- | --- | --- | --- |
 | 1 | `MMU_ON` | start.s，`msr SCTLR_EL1` 之后 | 2026-10-31 实机通过（8 条色带后自动重启） |
+| 0 | `NONE` | 不重启 | **当前选中** |
 | 2 | `COMMON_START_RET` | start.s，`ret` 回 arm_init 之前（仅冷启动） | 2026-10-31 实机通过（3 s 正常重启） |
-| 3 | `ARM_INIT` | arm_init.c，第一句 | 失败，可复现（5–6 s 后 watchdog bite） |
+| 3 | `ARM_INIT` | arm_init.c，第一句 | 失败（5–6 s 后 watchdog bite）；根因是固件把 ramdisk 冲成 0xAF，见下 |
 | 4 | `REBASED` | arm_init.c，`arm_slide_rebase_and_sign_image()` 之后 | |
 | 5 | `PE_INIT` | arm_init.c，`PE_init_platform(FALSE)` 之后 | |
 | 6 | `VM_INIT` | arm_init.c，`arm_vm_init()` 之后 | |
 | 7 | `KVA_CHECK` | start.s，`ret` 之前用 `at s1e1r` 翻译 arm_init 的 KVA，不跳过去 | 2026-10-31：2 s 正常重启 = 翻译成功且 PA 正确 |
 
-`MH2LM_PROBE_DUMP_PA = 1`（当前开启）：开 MMU 前在第 9、10 条色带位置各画 32 列位图（左边是最高位，白 = 1，灰 = 0）。
+`MH2LM_PROBE_DUMP_PA`（当前关闭，= 0）：开 MMU 前在第 9、10 条色带位置各画 32 列位图（左边是最高位，白 = 1，灰 = 0）。
 第 9 条 = Mach 头 PA >> 12；第 10 条 = 从 arm_init 的 PA 读出的第一个字。第 10 条没出现 = 那次读内存卡住了。
-当前重启点是 2（ret 前，5 s），留时间拍照。
+2026-10-31 读数：Mach 头 PA = 0xA4004000；第 10 条起初是 0xAFAFAFAF（DEBUG 固件的释放填充）。
+根因：Mu MemoryMapLib 的 "DTB Window" 写成了 Conv，DXE 把 ABL ramdisk 所在的页分配/释放，冲掉了 payload。
+改成 BsData（Mu-Silicium 分支 `mh2lm-dtb-window`，e84e094）后第 10 条 = 0xD10343FF，正确。
 
 **设备仓库不要放 `patches/xnu/` 目录**：format 1 下同名模块设备仓库优先，会整个替换 UniXNU 的 `patches/xnu/`。
 
