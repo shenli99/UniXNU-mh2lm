@@ -62,7 +62,7 @@ PSCI SYSTEM_RESET。看**重启方式**判断：
 | 值 | 名字 | 位置 | 结果 |
 | --- | --- | --- | --- |
 | 1 | `MMU_ON` | start.s，`msr SCTLR_EL1` 之后 | 2026-10-31 实机通过（8 条色带后自动重启） |
-| 0 | `NONE` | 不重启 | 2026-10-31（修复 ramdisk 后）：8 条色带后卡住 > 1 min，无 bite |
+| 0 | `NONE` | 不重启 | **当前选中**（改用下面的 boot-arg）；修复 ramdisk 后不重启时 8 条色带后卡住 > 1 min |
 | 2 | `COMMON_START_RET` | start.s，`ret` 回 arm_init 之前（仅冷启动） | 2026-10-31 实机通过（3 s 正常重启） |
 | 3 | `ARM_INIT` | arm_init.c，第一句 | 失败（5–6 s 后 watchdog bite）；根因是固件把 ramdisk 冲成 0xAF，见下 |
 | 4 | `REBASED` | arm_init.c，`arm_slide_rebase_and_sign_image()` 之后 | |
@@ -72,7 +72,7 @@ PSCI SYSTEM_RESET。看**重启方式**判断：
 | 8 | `SERIAL_INIT` | arm_init.c，`serial_init()` 之后 | |
 | 9 | `KPRINTF` | arm_init.c，`kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF)` 之后 | |
 | 10 | `PRINTF` | arm_init.c，`PE_init_printf(FALSE)` 之后 | 2026-10-31 实机通过（3 s 正常重启，无文字） |
-| 11 | `MACHINE_STARTUP` | arm_init.c，`machine_startup()` 之前 | **当前选中**（3 s） |
+| 11 | `MACHINE_STARTUP` | arm_init.c，`machine_startup()` 之前 | 2026-10-31 实机通过（3 s 正常重启，无文字） |
 
 `MH2LM_PROBE_DUMP_PA`（当前关闭，= 0）：开 MMU 前在第 9、10 条色带位置各画 32 列位图（左边是最高位，白 = 1，灰 = 0）。
 第 9 条 = Mach 头 PA >> 12；第 10 条 = 从 arm_init 的 PA 读出的第一个字。第 10 条没出现 = 那次读内存卡住了。
@@ -103,3 +103,11 @@ python3 unixnu payload --kernel /tmp/k8796/mach.development.bcm2837.unstripped \
   目前**还没准备**，因为要先做板级移植；见 `docs/notes/16-ios16-route.md` §16.3。
 - prelink 那一步会**故意失败**（board.toml 没有 `[kernel.prelink]`，且 16.7.16 的 kernelcache 是
   `8796.142.1`、与源码 `141.3` 不同修订）。workflow 用 `|| true` 接住，再用 `test -f` 断言内核二进制存在。
+
+### kernel_bootstrap 之后：用 boot-arg 选重启点（不用重编）
+
+`osfmk/kern/startup.c` 的 `kernel_bootstrap_log()` / `kernel_bootstrap_thread_log()` 每次被调用时，
+若参数等于 boot-arg `mh2lm_reset` 的值，就在 3 s 后 PSCI 重启。名字就是源码里传给这两个函数的字符串，
+例如 `mh2lm_reset=vm_mem_bootstrap`、`mh2lm_reset=sched_init`、`mh2lm_reset=machine_init`，
+也可以是 startup 子系统名（`kernel_startup_initialize_upto` 打印的那些）。
+改 ramdisk 里 `EFI/UniXNU/unixnu.toml` 的 `args` 即可，不需要再跑 CI。

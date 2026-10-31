@@ -792,10 +792,10 @@ index 12f1154..6b80f22 100644
   {
 diff --git a/patches/xnu/zzzz-mh2lm-early-boot-probes.patch b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
 new file mode 100644
-index 0000000..14ad644
+index 0000000..347cd0b
 --- /dev/null
 +++ b/patches/xnu/zzzz-mh2lm-early-boot-probes.patch
-@@ -0,0 +1,370 @@
+@@ -0,0 +1,424 @@
 +diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
 +index b87eef7..56fd5c1 100644
 +--- a/osfmk/arm/arm_init.c
@@ -864,7 +864,7 @@ index 0000000..14ad644
 + 
 +diff --git a/osfmk/arm64/mh2lm_probe.h b/osfmk/arm64/mh2lm_probe.h
 +new file mode 100644
-+index 0000000..71d0f9b
++index 0000000..9eb69ca
 +--- /dev/null
 ++++ b/osfmk/arm64/mh2lm_probe.h
 +@@ -0,0 +1,62 @@
@@ -892,7 +892,7 @@ index 0000000..14ad644
 ++#define MH2LM_PROBE_AT_PRINTF           10      /* arm_init.c: after PE_init_printf(FALSE) */
 ++#define MH2LM_PROBE_AT_MACHINE_STARTUP  11      /* arm_init.c: just before machine_startup */
 ++
-++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_MACHINE_STARTUP
+++#define MH2LM_PROBE_RESET_AT            MH2LM_PROBE_AT_NONE
 ++/* Bands 9-10 (MMU off): Mach header PA and the first word at arm_init's PA, as 32 bit columns. */
 ++#define MH2LM_PROBE_DUMP_PA             0
 ++#define MH2LM_PROBE_RESET_SECONDS       3       /* well inside the secure watchdog window (a 10 s wait was bitten) */
@@ -1166,6 +1166,60 @@ index 0000000..14ad644
 + 	// Return to arm_init()
 + 	ret
 + 
++diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
++index b790d0d..1dab287 100644
++--- a/osfmk/kern/startup.c
+++++ b/osfmk/kern/startup.c
++@@ -78,6 +78,7 @@
++ #include <kern/mach_param.h>
++ #include <kern/misc_protos.h>
++ #include <kern/clock.h>
+++#include <arm64/mh2lm_probe.h>
++ #include <kern/coalition.h>
++ #include <kern/cpu_number.h>
++ #include <kern/cpu_quiesce.h>
++@@ -218,9 +219,33 @@ extern int serverperfmode;
++ 
++ TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
++ 
+++/*
+++ * mh2lm bring-up: boot-arg mh2lm_reset=<step> resets the device (after the
+++ * probe delay) when kernel_bootstrap{,_thread}_log() is called with that step
+++ * name, e.g. mh2lm_reset=sched_init or a startup subsystem name such as
+++ * mh2lm_reset=zalloc. A bisection then only needs a different boot-arg.
+++ */
+++static void
+++mh2lm_bootstrap_step(const char *message)
+++{
+++	static int  parsed;
+++	static char target[64];
+++
+++	if (!parsed) {
+++		parsed = 1;
+++		if (!PE_parse_boot_arg_str("mh2lm_reset", target, sizeof(target))) {
+++			target[0] = '\0';
+++		}
+++	}
+++	if (target[0] != '\0' && strcmp(message, target) == 0) {
+++		mh2lm_probe_reset();
+++	}
+++}
+++
++ static inline void
++ kernel_bootstrap_log(const char *message)
++ {
+++	mh2lm_bootstrap_step(message);
++ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
++ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
++ 		kprintf("kernel_bootstrap: %s\n", message);
++@@ -231,6 +256,7 @@ kernel_bootstrap_log(const char *message)
++ static inline void
++ kernel_bootstrap_thread_log(const char *message)
++ {
+++	mh2lm_bootstrap_step(message);
++ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
++ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
++ 		kprintf("kernel_bootstrap_thread: %s\n", message);
 diff --git a/scripts/build-arm-driver.py b/scripts/build-arm-driver.py
 index 4dcaa91..aef7ad9 100644
 --- a/scripts/build-arm-driver.py
